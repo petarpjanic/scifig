@@ -50,4 +50,9 @@ export function syncDims(doc, enforce) {
 }
 // Set the measured length: moves the attached geometry (and keeps a locked dimension locked at the new value).
 export function driveDim(doc, s, len) { syncDims(doc, false); if (s.lock != null) s.lock = len; drive(doc, s, len); syncDims(doc, false); const o = doc.findShape(s.id); if (o) o.L.touch(); }
+// After a size was typed for these shapes, driving dimensions on them take the new length instead of undoing it.
+export function relockDims(doc, shapes) {
+  const ids = new Set(shapes.map(s => s.id)); syncDims(doc, false);
+  for (const L of doc.layers) if (L.type === 'vector') for (const s of L.shapes) if (s.type === 'dim' && s.lock != null && ((s.ra && ids.has(s.ra.id)) || (s.rb && ids.has(s.rb.id)))) s.lock = dist(s.a, s.b);
+}
 Doc.preCommit.push(doc => syncDims(doc, true));

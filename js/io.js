@@ -1,6 +1,6 @@
 // File input/output: images, HEIC, camera raw, 8/16/32-bit TIFF and PNG, PSD, SVG (editable vectors), PDF/AI, EPS, native .scifig; exports; autosave.
 import { app } from './app.js';
-import { Doc, Layer, mk, uid, rasterLayer, vectorLayer, flatten, transformShape, mMul, mTranslate, geomSubs, endDir, arrowLen, textLayout, textRuns, dashArr, dimShapes, BLENDS, fmt, setExporting } from './core.js';
+import { Doc, Layer, mk, uid, rasterLayer, vectorLayer, flatten, transformShape, mMul, mTranslate, geomSubs, endDir, arrowLen, textLayout, textRuns, dashArr, dimShapes, BLENDS, fmt, setExporting, isGrad, solidOf, gradGeom, stopColor, shapeBBox } from './core.js';
 import { hdFromInts, developHD, autoRange, hdComposite, toU16, png16, tiffHi } from './hd.js';
 import { rasterOf } from './ops.js';
 import { dialog } from './ui.js';
@@ -333,7 +333,8 @@ function pathD(subs) {
   return d;
 }
 function shapeSVG(s) {
-  const st = s.st || {}, op = st.alpha != null && st.alpha < 1 ? ` opacity="${n2(st.alpha)}"` : '';
+  const st = s.st || {}, op = (st.alpha != null && st.alpha < 1 ? ` opacity="${n2(st.alpha)}"` : '') + svgShadow(st.shadow);
+  const bb = isGrad(st.fill) || isGrad(st.stroke) ? (s.type === 'text' ? shapeBBox({ ...s, rot: 0 }) : shapeBBox(s)) : null;
   if (s.type === 'dim') return d0.hideDims || s.note === false ? '' : `<g>${dimShapes(s).map(shapeSVG).join('')}</g>`;
   if (s.type === 'text') {
     const L = textLayout(s), anchor = s.align === 'center' ? 'middle' : s.align === 'right' ? 'end' : 'start'; let body = '';
@@ -345,16 +346,17 @@ function shapeSVG(s) {
       }
       if (shift) body += `<tspan dy="${n2(-shift)}"></tspan>`;
     });
-    return `<text transform="translate(${n2(s.x)} ${n2(s.y)}) rotate(${n2((s.rot || 0) * 180 / Math.PI)})" font-family="${esc(s.font || 'Arial')}" font-size="${n2(s.size)}"${s.bold ? ' font-weight="bold"' : ''}${s.italic ? ' font-style="italic"' : ''} text-anchor="${anchor}" fill="${esc(st.fill || '#000')}"${op} xml:space="preserve">${body}</text>`;
+    return `<text transform="translate(${n2(s.x)} ${n2(s.y)}) rotate(${n2((s.rot || 0) * 180 / Math.PI)})" font-family="${esc(s.font || 'Arial')}" font-size="${n2(s.size)}"${s.bold ? ' font-weight="bold"' : ''}${s.italic ? ' font-style="italic"' : ''} text-anchor="${anchor}" fill="${isGrad(st.fill) ? svgGrad(st.fill, { ...bb, x: bb.x - s.x, y: bb.y - s.y }) : esc(st.fill || '#000')}"${op} xml:space="preserve">${body}</text>`;
   }
   const dash = dashArr(st).map(v => n2(v * st.sw)).join(' ');
-  const paintAttr = `fill="${st.fill ? esc(st.fill) : 'none'}"${st.fill ? ' fill-rule="evenodd"' : ''}` + (st.stroke && st.sw > 0 ? ` stroke="${esc(st.stroke)}" stroke-width="${n2(st.sw)}"${dash ? ` stroke-dasharray="${dash}"` : ''}${st.dash === 'dotted' || st.cap === 'round' ? ' stroke-linecap="round"' : ''}${st.join ? ` stroke-linejoin="${st.join}"` : ''}` : '');
+  const pnt = p => isGrad(p) ? svgGrad(p, bb) : esc(p);
+  const paintAttr = `fill="${st.fill ? pnt(st.fill) : 'none'}"${st.fill ? ' fill-rule="evenodd"' : ''}` + (st.stroke && st.sw > 0 ? ` stroke="${pnt(st.stroke)}" stroke-width="${n2(st.sw)}"${dash ? ` stroke-dasharray="${dash}"` : ''}${st.dash === 'dotted' || st.cap === 'round' ? ' stroke-linecap="round"' : ''}${st.join ? ` stroke-linejoin="${st.join}"` : ''}` : '');
   if (s.type === 'rect' && !s.rot) return `<rect x="${n2(s.x)}" y="${n2(s.y)}" width="${n2(s.w)}" height="${n2(s.h)}"${s.r ? ` rx="${n2(s.r)}"` : ''} ${paintAttr}${op}/>`;
   if (s.type === 'ellipse' && !s.rot) return `<ellipse cx="${n2(s.cx)}" cy="${n2(s.cy)}" rx="${n2(s.rx)}" ry="${n2(s.ry)}" ${paintAttr}${op}/>`;
   let subs = geomSubs(s), extra = '';
   const open = s.type === 'path' && !s.closed && s.nodes.length > 1 && st.stroke;
   if (open && ((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none'))) {
-    const nodes = s.nodes.map(q => ({ ...q })), L = arrowLen(st.sw, st.hs), col = esc(st.stroke);
+    const nodes = s.nodes.map(q => ({ ...q })), L = arrowLen(st.sw, st.hs), col = esc(solidOf(st.stroke));
     const head = (kind, tip, d) => { if (!d || !kind || kind === 'none') return;
       const nx = -d.y, ny = d.x, P = (a, b) => `${n2(tip.x - d.x * L * a + nx * L * b)} ${n2(tip.y - d.y * L * a + ny * L * b)}`;
       if (kind === 'arrow') extra += `<path d="M${P(0, 0)}L${P(1, 0.36)}L${P(1, -0.36)}Z" fill="${col}"/>`;
@@ -373,9 +375,21 @@ function shapeSVG(s) {
   const p = `<path d="${pathD(subs)}" ${paintAttr}/>`;
   return extra || op ? `<g${op}>${p}${extra}</g>` : p;
 }
-let d0 = {};
+let d0 = {}, defs = [];
+// gradients and shadows become <defs> entries that the shapes point to
+function svgGrad(p, b) {
+  const id = 'g' + defs.length, q = gradGeom(p, b), stops = p.stops.map(s => `<stop offset="${n2(s.o)}" stop-color="${esc(s.c)}"${(s.a ?? 1) < 1 ? ` stop-opacity="${n2(s.a)}"` : ''}/>`).join('');
+  defs.push(p.g === 'radial' ? `<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${n2(q.cx)}" cy="${n2(q.cy)}" r="${n2(q.r)}">${stops}</radialGradient>`
+    : `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${n2(q.x1)}" y1="${n2(q.y1)}" x2="${n2(q.x2)}" y2="${n2(q.y2)}">${stops}</linearGradient>`);
+  return `url(#${id})`;
+}
+function svgShadow(sh) {
+  if (!sh) return ''; const id = 'f' + defs.length;
+  defs.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${n2(sh.x ?? 3)}" dy="${n2(sh.y ?? 3)}" stdDeviation="${n2((sh.blur ?? 6) / 2)}" flood-color="${esc(sh.c || '#000000')}" flood-opacity="${n2(sh.a ?? 0.45)}"/></filter>`);
+  return ` filter="url(#${id})"`;
+}
 export function toSVG(d) {
-  d0 = d;
+  d0 = d; defs = [];
   const vis = d.layers.filter(L => L.visible); let lastAdj = -1; vis.forEach((L, i) => { if (L.type === 'adjust') lastAdj = i; });
   let body = '';
   const image = (c, x, y, L) => `<image x="${x}" y="${y}" width="${c.width}" height="${c.height}"${L && L.opacity < 1 ? ` opacity="${n2(L.opacity)}"` : ''}${L && L.blend !== 'normal' ? ` style="mix-blend-mode:${L.blend}"` : ''} href="${c.toDataURL('image/png')}"/>\n`;
@@ -385,7 +399,7 @@ export function toSVG(d) {
     else if (L.type === 'raster') body += image(L.canvas, L.x, L.y, L);
     else if (L.type === 'vector') body += `<g id="${esc(L.name.replace(/\s+/g, '_'))}"${L.opacity < 1 ? ` opacity="${n2(L.opacity)}"` : ''}${L.blend !== 'normal' ? ` style="mix-blend-mode:${L.blend}"` : ''}>\n${L.shapes.map(shapeSVG).join('\n')}\n</g>\n`;
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${n2(d.w / d.dpi * 25.4)}mm" height="${n2(d.h / d.dpi * 25.4)}mm" viewBox="0 0 ${d.w} ${d.h}">\n${body}</svg>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${n2(d.w / d.dpi * 25.4)}mm" height="${n2(d.h / d.dpi * 25.4)}mm" viewBox="0 0 ${d.w} ${d.h}">\n${defs.length ? `<defs>\n${defs.join('\n')}\n</defs>\n` : ''}${body}</svg>\n`;
 }
 const blobOf = (c, type, q) => new Promise(ok => c.toBlob(ok, type, q));
 export async function exportDoc(d, format, o = {}) { setExporting(true); try { await exportDoc2(d, format, o); } finally { setExporting(false); } }

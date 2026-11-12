@@ -7,7 +7,9 @@ import { thumb, maskThumb } from './ops.js';
 import { TOOL_ORDER } from './tools.js';
 import { colorPicker, pickColor } from './color.js';
 import { DEV_PARAMS, developHD, autoRange } from './hd.js';
-import { driveDim } from './dims.js';
+import { driveDim, relockDims } from './dims.js';
+import { pickPaint, STYLES, styleOf, styleChip } from './styles.js';
+import { cssPaint, isGrad } from './core.js';
 
 const $ = id => document.getElementById(id);
 export function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -54,8 +56,9 @@ export function paramUI(defs, vals, onChange, inline = false) {
       const s = el('select'); for (const o of p.options) { const [val, lab] = Array.isArray(o) ? o : [o, o]; const op = el('option', null, lab); op.value = val; if (val === '-') op.disabled = true; s.append(op); }
       s.value = v; s.onchange = () => fire(s.value, true); row.classList.add('wide'); row.append(s);
     } else if (p.type === 'color') {
-      const w = el('button', 'swatch'), show = c => { w.style.background = c || ''; w.classList.toggle('none', !c); }; show(v); w.title = (p.label || 'Colour') + ': click to change';
-      w.onclick = e => { e.stopPropagation(); pickColor(w, { color: vals[id] || p.fallback || '#000000', none: p.none, onChange: (c, fin) => { show(c); fire(c, fin); } }); };
+      const w = el('button', 'swatch'), show = c => { w.style.background = cssPaint(c); w.classList.toggle('none', !c); }; show(v); w.title = (p.label || 'Colour') + ': click to change' + (p.gradient ? ' (colour or gradient)' : '');
+      w.onclick = e => { e.stopPropagation(); if (p.gradient) pickPaint(w, { paint: vals[id] ?? null, none: p.none, onChange: (c, fin) => { show(c); fire(c, fin); } });
+        else pickColor(w, { color: vals[id] || p.fallback || '#000000', none: p.none, onChange: (c, fin) => { show(c); fire(c, fin); } }); };
       row.classList.add('wide'); row.append(w);
     } else if (p.type === 'text') { const t = el('input'); t.type = 'text'; t.value = v ?? ''; t.onchange = () => fire(t.value, true); row.classList.add('wide'); row.append(t); }
     else if (p.type === 'textarea') { const t = el('textarea'); t.value = v ?? ''; t.oninput = () => fire(t.value, false); t.onchange = () => fire(t.value, true); row.classList.add('full'); row.append(t); }
@@ -196,14 +199,28 @@ function buildToolbar() {
 const FONTS = ['Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Courier New', 'Verdana', 'Trebuchet MS', 'Palatino', 'Garamond', 'Tahoma', 'Impact', 'Comic Sans MS', 'Menlo', 'system-ui'];
 const fontOpts = cur => { const loc = app.settings.localFonts || [], all = [...FONTS, ['-', '── Web fonts ──'], ...WEBFONTS, ...(loc.length ? [['-', '── This computer ──'], ...loc] : [])]; if (cur && !all.includes(cur)) all.unshift(cur); return all; };
 const DASH_OPTS = Object.keys(DASHES), VECTOR_TOOLS = ['line', 'spline', 'pen', 'rect', 'ellipse', 'dim', 'text'];
-const styleDefs = st => [{ id: 'stroke', label: 'Stroke', type: 'color', none: true }, { id: 'sw', label: 'Width', type: 'len', unit: 'pt', min: 0, tip: 'Line width' },
-  { id: 'fill', label: 'Fill', type: 'color', none: true, fallback: '#ffffff' }, { id: 'dash', label: 'Line', type: 'select', options: DASH_OPTS, tip: 'Solid, dashed, dotted or dash-dot' },
+const styleDefs = st => [{ id: 'stroke', label: 'Stroke', type: 'color', none: true, gradient: true }, { id: 'sw', label: 'Width', type: 'len', unit: 'pt', min: 0, tip: 'Line width' },
+  { id: 'fill', label: 'Fill', type: 'color', none: true, gradient: true, fallback: '#ffffff' }, { id: 'dash', label: 'Line', type: 'select', options: DASH_OPTS, tip: 'Solid, dashed, dotted or dash-dot' },
   ...(st.dash && st.dash !== 'solid' ? [...(st.dash !== 'dotted' ? [{ id: 'dl', label: 'Dash', type: 'number', min: 0.1, step: 0.5, tip: 'Dash length, in line widths' }] : []), { id: 'dg', label: 'Gap', type: 'number', min: 0.1, step: 0.5, tip: 'Gap between dashes or dots, in line widths (smaller = denser)' }] : []),
   { id: 'as', label: 'Start', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the start' }, { id: 'ae', label: 'End', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the end' },
   ...((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none') ? [{ id: 'hsPct', label: 'Head %', type: 'number', min: 10, step: 10, tip: 'Arrowhead size' }] : []),
-  { id: 'alphaPct', label: 'Opacity', type: 'number', min: 0, max: 100, tip: 'Opacity in percent' }];
+  { id: 'alphaPct', label: 'Opacity', type: 'number', min: 0, max: 100, tip: 'Opacity in percent' }, { id: 'shadow', label: 'Drop shadow', type: 'check' },
+  ...(st.shadow ? [{ id: 'shBlur', label: 'Blur', type: 'len', min: 0 }, { id: 'shX', label: 'Offset X', type: 'len' }, { id: 'shY', label: 'Offset Y', type: 'len' }, { id: 'shA', label: 'Shadow %', type: 'number', min: 0, max: 100 }] : [])];
 const textDefs = f => [{ id: 'font', label: 'Font', type: 'select', options: fontOpts(f) }, { id: 'size', label: 'Size', type: 'len', unit: 'pt', min: 0.01, tip: 'Text size' }, { id: 'bold', label: 'B', type: 'check' }, { id: 'italic', label: 'I', type: 'check' }, { id: 'align', label: 'Align', type: 'select', options: ['left', 'center', 'right'] }];
-const styleVals = (st, d) => ({ stroke: st.stroke || null, sw: st.sw || 0, fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100) });
+const styleVals = (st, d) => ({ stroke: st.stroke || null, sw: st.sw || 0, fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100),
+  shadow: !!st.shadow, shBlur: st.shadow ? st.shadow.blur ?? 6 : 6, shX: st.shadow ? st.shadow.x ?? 3 : 3, shY: st.shadow ? st.shadow.y ?? 3 : 3, shA: st.shadow ? Math.round((st.shadow.a ?? 0.45) * 100) : 45 });
+// Apply one style field to a style object (shared by selected shapes and the defaults for new ones).
+function setStyle(t, id, v, d) {
+  if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'hsPct') t.hs = v / 100; else if (id === 'shadow') { if (v) t.shadow = { c: '#000000', a: 0.4, blur: 2 * d.ptPx, x: d.ptPx, y: 1.5 * d.ptPx }; else delete t.shadow; }
+  else if (id === 'shBlur' || id === 'shX' || id === 'shY' || id === 'shA') { if (t.shadow) t.shadow[{ shBlur: 'blur', shX: 'x', shY: 'y', shA: 'a' }[id]] = id === 'shA' ? v / 100 : v; }
+  else t[id] = v;
+  if (id === 'dash') { delete t.dl; delete t.dg; }
+}
+// Defaults for new shapes keep the line width in pt.
+function setDefault(S, id, v, d) { if (id === 'sw') S.swPt = v / d.ptPx; else { const t = { ...S, sw: S.swPt * d.ptPx }; setStyle(t, id, v, d); delete t.sw; for (const k of Object.keys(S)) if (!(k in t)) delete S[k]; Object.assign(S, t); } }
+const SHAPE_REBUILD = ['dash', 'as', 'ae', 'shadow'];
+// One-click templates.
+function stylesGroup(label, apply) { const box = el('div', 'stylegrid'); for (const t of STYLES) { const b = styleChip(t); b.onclick = () => apply(t); box.append(b); } return grp(label, box); }
 const sep = () => el('span', 'osep');
 const grp = (label, ...nodes) => { const g = el('div', 'grp'); g.append(el('span', 'gl', label), ...nodes); return g; };
 const IN = false; // the options sidebar stacks its fields
@@ -214,10 +231,13 @@ function objectBar(bar, d) {
   const texts = shapes.filter(s => s.type === 'text'), geo = shapes.filter(s => s.type !== 'text');
   if (geo.length) {
     const st = geo[0].st || {};
-    bar.append(grp('Line', paramUI(styleDefs(st).filter(p => geo[0].type !== 'dim' || !['fill', 'dash', 'dl', 'dg'].includes(p.id)), styleVals(st, d), (id, v, fin) => {
-      for (const s of geo) { const t = s.st || (s.st = {}); if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'hsPct') t.hs = v / 100; else t[id] = v; if (id === 'dash') { delete t.dl; delete t.dg; } }
-      if (id === 'hsPct') S.style.hs = v / 100; else if (id === 'sw') S.style.swPt = v / d.ptPx; else if (id !== 'alphaPct') S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings();
-      touchAll(); if (fin) app.commit('Style'); else app.refresh('render');
+    const onlyDims = geo.every(s => s.type === 'dim');
+    if (!onlyDims) bar.append(stylesGroup('Style templates', t => { for (const s of geo) if (s.type !== 'dim') s.st = { ...s.st, ...styleOf(t, d) }; touchAll(); app.commit('Style ' + t.name); }));
+    bar.append(grp(onlyDims ? 'Lines and arrows' : 'Line and fill', paramUI(styleDefs(st).filter(p => !onlyDims || !['fill', 'dash', 'dl', 'dg', 'shadow', 'shBlur', 'shX', 'shY', 'shA'].includes(p.id)), styleVals(st, d), (id, v, fin) => {
+      for (const s of geo) setStyle(s.st || (s.st = {}), id, v, d);
+      // what you change becomes the default for the next shape of that kind (dimensions keep their own)
+      if (id !== 'alphaPct') { if (onlyDims) { const D2 = S.dimStyle || (S.dimStyle = {}); if (id === 'sw') D2.swPt = v / d.ptPx; else if (id === 'hsPct') D2.hs = v / 100; else D2[id] = v; } else setDefault(S.style, id, v, d); app.saveSettings(); }
+      touchAll(); if (fin) app.commit('Style'); else app.refresh('render'); if (fin && SHAPE_REBUILD.includes(id)) app.refresh('props');
     }, IN)));
     const sp = geo.filter(s => s.type === 'path' && s.nodes.some(n => n.a));
     if (sp.length) bar.append(paramUI([{ id: 't', label: 'Smooth', type: 'number', min: 0, max: 3, step: 0.1, tip: 'Spline smoothness: 0 = straight segments, 1 = natural, more = rounder' }], { t: sp[0].tension ?? 1 }, (id, v) => { for (const s of sp) { s.tension = v; smoothShape(s); } touchAll(); app.commit('Spline smoothness'); }, IN));
@@ -228,11 +248,12 @@ function objectBar(bar, d) {
     const defs = texts.length ? [...textDefs(tv.font), { id: 'fill', label: 'Colour', type: 'color', fallback: '#000000' }] : [...textDefs(tv.font).slice(0, 2), { id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6 }, { id: 'label', label: 'Label', type: 'text', tip: 'Leave empty to show the measured length' }];
     if (dims.length === 1 && sel.length === 1) { // a dimension both labels and constrains
       const dm = dims[0], att = (dm.ra ? 1 : 0) + (dm.rb ? 1 : 0);
-      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Length', type: 'len', min: 1e-9, tip: att ? 'Type a new length: the attached shape is resized or moved to match' : 'Not attached to a shape: this only moves the end of the dimension' },
-        { id: 'lock', label: 'Lock', type: 'check', tip: 'Constraint: keep this length when the shape is edited' }, { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: the dimension is a working constraint only, shown faintly and left out of exported files' },
+      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Value', type: 'len', min: 1e-9, tip: att ? 'Type a new value: the attached shape is resized or moved to match (or double-click the value on the drawing)' : 'Not attached to a shape: this only moves the end of the dimension' },
+        { id: 'lock', label: 'Driving (constrains the shape)', type: 'check', tip: 'On, as in Fusion 360: the shape keeps this length; dragging it cannot change it. Off: a reference dimension that only shows the length and follows the shape.' }, { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: the dimension is a working constraint only, shown faintly and left out of exported files' },
         { id: 'off', label: 'Offset', type: 'len', tip: 'Distance of the dimension line from the measured points' }],
         { len: dist(dm.a, dm.b), lock: dm.lock != null, note: dm.note !== false, off: dm.off || 0 }, (id, v) => {
-          if (id === 'len' && v > 0) driveDim(d, dm, v); else if (id === 'lock') { if (v) dm.lock = dist(dm.a, dm.b); else delete dm.lock; } else if (id === 'note') dm.note = v; else if (id === 'off') dm.off = v;
+          if (id === 'len' && v > 0) driveDim(d, dm, v); else if (id === 'lock') { if (v) dm.lock = dist(dm.a, dm.b); else delete dm.lock; const D2 = S.dimStyle || (S.dimStyle = {}); D2.driving = v; app.saveSettings(); }
+          else if (id === 'note') dm.note = v; else if (id === 'off') dm.off = v;
           touchAll(); app.commit('Dimension');
         }, IN), el('span', 'gl', att === 2 ? 'attached to the shape' : att ? 'one end attached' : 'not attached')));
     }
@@ -240,6 +261,7 @@ function objectBar(bar, d) {
       if (id === 'font') needFont(v);
       for (const s of [...texts, ...dims]) { if (id === 'size') s.size = v; else if (id === 'fill') (s.st || (s.st = {})).fill = v || '#000000'; else if (id === 'label') s.text = v || null; else s[id] = v; }
       if (texts.length && id !== 'fill') { if (id === 'size') S.text.sizePt = v / d.ptPx; else S.text[id] = v; app.saveSettings(); }
+      if (!texts.length && id !== 'label') { const D2 = S.dimStyle || (S.dimStyle = {}); if (id === 'size') D2.sizePt = v / d.ptPx; else D2[id] = v; if (id === 'dec') app.tools.get('dim').opt.dec = v; app.saveSettings(); }
       touchAll(); if (fin) app.commit('Text style'); else app.refresh('render');
     }, IN)));
   }
@@ -257,6 +279,7 @@ function objectBar(bar, d) {
     else if (id === 'turn' && v) m = mRotateAbout(-v * Math.PI / 180, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
     else if (id === 'len' || id === 'ang') { const [a, c] = line.nodes, L = id === 'len' ? px : dist(a, c), an = (id === 'ang' ? v : g.ang) * Math.PI / 180; c.x = a.x + L * Math.cos(an); c.y = a.y - L * Math.sin(an); }
     if (m) for (const s of shapes) transformShape(s, m);
+    relockDims(d, shapes); // a size typed here wins over driving dimensions on these shapes
     touchAll(); app.commit('Transform');
   }, IN)));
 }
@@ -276,8 +299,12 @@ function buildOptbar() {
     const S = app.settings;
     if (t.id === 'text') bar.append(grp('New text', paramUI(textDefs(S.text.font), { ...S.text, size: S.text.sizePt * d.ptPx }, (id, v) => { if (id === 'font') needFont(v); if (id === 'size') S.text.sizePt = v / d.ptPx; else S.text[id] = v; app.saveSettings(); }, IN)));
     else {
-      const vals = styleVals({ ...S.style, sw: S.style.swPt * d.ptPx }, d);
-      bar.append(grp('New shape', paramUI(styleDefs(S.style), vals, (id, v) => { if (id === 'alphaPct') S.style.alpha = v / 100; else if (id === 'hsPct') S.style.hs = v / 100; else if (id === 'sw') S.style.swPt = v / d.ptPx; else S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings(); if (['dash', 'as', 'ae'].includes(id)) app.refresh('tool'); }, IN)));
+      if (t.id === 'dim') { const D2 = S.dimStyle || {}; bar.append(grp('New dimension', el('div', 'props-note', `Text ${fmt(D2.sizePt ?? S.text.sizePt, 2)} pt ${D2.font || S.text.font}, line ${fmt(D2.swPt ?? 0.75, 2)} pt, ${D2.driving === false ? 'reference' : 'driving'}. Change a placed dimension and the next ones use the same settings.`))); }
+      else {
+        const vals = styleVals({ ...S.style, sw: S.style.swPt * d.ptPx }, d);
+        bar.append(stylesGroup('Style templates', tp => { const o = styleOf(tp, d); o.swPt = (o.sw ?? S.style.swPt * d.ptPx) / d.ptPx; delete o.sw; for (const k of ['fill', 'stroke', 'shadow']) if (!(k in o)) o[k] = S.style[k]; Object.assign(S.style, o); if (!o.shadow) delete S.style.shadow; app.saveSettings(); app.refresh('tool'); app.toast('The next shapes use “' + tp.name + '”'); }));
+        bar.append(grp('New shape', paramUI(styleDefs(S.style), vals, (id, v) => { setDefault(S.style, id, v, d); app.saveSettings(); if (SHAPE_REBUILD.includes(id)) app.refresh('tool'); }, IN)));
+      }
     }
   }
   if (!bar.children.length) bar.append(el('div', 'props-note', t.hint || ''));
@@ -299,6 +326,7 @@ function buildTabs() {
     x.onclick = e => { e.stopPropagation(); app.run('file.close', d); }; x.title = 'Close';
     bar.append(t);
   }
+  const add = el('div', 'tab add', '+'); add.title = tipOf('file.new') + '\nA4, Letter, journal columns, screen sizes or the clipboard image size'; add.onclick = () => app.run('file.new'); bar.append(add);
   document.title = app.doc ? app.doc.name + ' – SciFig' : 'SciFig';
 }
 
@@ -323,7 +351,7 @@ function buildColorPanel() {
   const pk = colorPicker(app.fg, set, true);
   const remember = c => { const r = app.settings.recent || (app.settings.recent = []); const i = r.indexOf(c); if (i >= 0) r.splice(i, 1); r.unshift(c); r.length = Math.min(r.length, 16); app.saveSettings(); drawRecent(); };
   const drawRecent = () => { recent.innerHTML = ''; for (const c of [...(app.settings.recent || []), '#000000', '#ffffff', '#e04848', '#ff9f1a', '#ffd23f', '#3cb44b', '#19c3c3', '#4878e8', '#9b59d0', '#888888'].slice(0, 20)) { const b = el('button', 'chip'); b.style.background = c; b.title = c; b.onclick = () => set(c, true); recent.append(b); } };
-  const paintSw = () => { fg.style.background = app.fg; bg.style.background = app.bg; for (const [i, t] of [[iS, 'stroke'], [iF, 'fill']]) { const c = cur(t); i.style.background = c || ''; i.classList.toggle('none', !c); } };
+  const paintSw = () => { fg.style.background = app.fg; bg.style.background = app.bg; for (const [i, t] of [[iS, 'stroke'], [iF, 'fill']]) { const c = cur(t); i.style.background = cssPaint(c); i.classList.toggle('none', !c); } };
   const sync = () => {
     const has = shapes().length > 0;
     if (has && !hadSel && (which === 'fg' || which === 'bg')) which = shapes()[0].s.type === 'text' || !(shapes()[0].s.st || {}).stroke ? 'fill' : 'stroke'; // a shape was just selected: edit its colour
@@ -331,7 +359,7 @@ function buildColorPanel() {
     hadSel = has; paintSw();
     fg.classList.toggle('on', which === 'fg'); bg.classList.toggle('on', which === 'bg'); bS.classList.toggle('on', which === 'stroke'); bF.classList.toggle('on', which === 'fill');
     none.style.visibility = which === 'stroke' || which === 'fill' ? '' : 'hidden';
-    const c = cur(which); if (c) pk.set(c);
+    const c = cur(which); if (c) pk.set(isGrad(c) ? c.stops[0].c : c);
   };
   fg.onclick = () => { which = 'fg'; sync(); }; bg.onclick = () => { which = 'bg'; sync(); }; bS.onclick = () => { which = 'stroke'; sync(); }; bF.onclick = () => { which = 'fill'; sync(); };
   none.onclick = () => set(null, true);

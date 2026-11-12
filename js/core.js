@@ -46,7 +46,9 @@ export const fmt = (v, d = 2) => String(+(+v).toFixed(d));
 // ---------- shapes ----------
 // path: {nodes:[{x,y,ix,iy,ox,oy}], closed, subs:[{nodes,closed}]}  rect: {x,y,w,h,r,rot}
 // ellipse: {cx,cy,rx,ry,rot}  text: {x,y,text,size,font,bold,italic,align,rot}
-// style st: {stroke, sw, fill, dash, as, ae, alpha}
+// style st: {stroke, sw, fill, dash, as, ae, alpha, shadow}
+// stroke and fill are a colour string, null, or a gradient {g: 'linear'|'radial', angle (° counter-clockwise), stops: [{o, c, a}]}
+// shadow: {c, a, blur, x, y} in document px
 const hctx = mk(1, 1).getContext('2d');
 export const DASHES = { solid: [], dashed: [4, 3], dotted: [0.1, 2.2], dashdot: [5, 2.5, 0.1, 2.5] };
 export const HEADS = ['none', 'arrow', 'open', 'bar', 'dot', 'circle', 'square', 'diamond'];
@@ -96,12 +98,12 @@ const dimHidden = s => { const d = RD || app.doc; return (d && d.hideDims) || (E
 export function dimShapes(s) {
   const d = RD || app.doc, a = s.a, b = s.b, L = dist(a, b) || 1e-9, ux = (b.x - a.x) / L, uy = (b.y - a.y) / L, nx = -uy, ny = ux, off = s.off || 0, sg = off < 0 ? -1 : 1;
   const st = s.st || {}, A = { x: a.x + nx * off, y: a.y + ny * off }, B = { x: b.x + nx * off, y: b.y + ny * off }, g = Math.min(Math.abs(off), s.size * 0.25) * sg, e = s.size * 0.4 * sg;
-  const line = { stroke: st.stroke, sw: st.sw, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: st.alpha };
+  const line = { stroke: solidOf(st.stroke), sw: st.sw, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: st.alpha };
   const ext = (p, P) => ({ type: 'path', closed: false, st: line, nodes: [{ x: p.x + nx * g, y: p.y + ny * g }, { x: P.x + nx * e, y: P.y + ny * e }] });
   let rot = Math.atan2(uy, ux); if (rot > Math.PI / 2 + 1e-9 || rot <= -Math.PI / 2 + 1e-9) rot += Math.PI;
   const up = s.size * 0.3 + (st.sw || 0), label = s.text || `${(d ? d.toU(L) : L).toFixed(s.dec ?? 2)}${s.unit === false || !d ? '' : ' ' + d.unit}`;
   return [{ type: 'path', closed: false, nodes: [{ x: A.x, y: A.y }, { x: B.x, y: B.y }], st: { ...line, as: st.as ?? 'arrow', ae: st.ae ?? 'arrow', hs: st.hs } }, ext(a, A), ext(b, B),
-    { type: 'text', x: (A.x + B.x) / 2 + Math.sin(rot) * up, y: (A.y + B.y) / 2 - Math.cos(rot) * up, text: label, size: s.size, font: s.font || 'Arial', bold: s.lock != null, italic: false, align: 'center', rot, st: { fill: st.stroke || '#000', alpha: st.alpha } }];
+    { type: 'text', x: (A.x + B.x) / 2 + Math.sin(rot) * up, y: (A.y + B.y) / 2 - Math.cos(rot) * up, text: label, size: s.size, font: s.font || 'Arial', bold: s.lock != null, italic: false, align: 'center', rot, st: { fill: solidOf(st.stroke) || '#000', alpha: st.alpha } }];
 }
 // Spline nodes (flag a) get their handles from their neighbours; t is the smoothness (1 = natural).
 export function autoSmooth(sp, t = 1) {
@@ -263,11 +265,37 @@ export function textCorners(s) {
   const L = textLayout(s), c = Math.cos(s.rot || 0), si = Math.sin(s.rot || 0);
   return [[L.x0, L.y0], [L.x0 + L.w, L.y0], [L.x0 + L.w, L.y0 + L.h], [L.x0, L.y0 + L.h]].map(([x, y]) => ({ x: s.x + x * c - y * si, y: s.y + x * si + y * c }));
 }
+// ---------- paints: solid colours and gradients ----------
+const hex2 = h => { const m = /^#?([0-9a-f]{6})/i.exec(h || '') || ['', '000000']; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+export const stopColor = (c, a = 1) => { const [r, g, b] = hex2(c); return `rgba(${r},${g},${b},${a})`; };
+export const isGrad = p => !!(p && typeof p === 'object' && p.stops);
+export const solidOf = p => !p ? null : typeof p === 'string' ? p : (p.stops[0] || {}).c || '#000000'; // for arrowheads and swatches
+// End points of a linear gradient across a box, or the circle of a radial one (document px).
+export function gradGeom(p, b) {
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  if (p.g === 'radial') return { cx: b.x + b.w * (p.cx ?? 0.5), cy: b.y + b.h * (p.cy ?? 0.5), r: Math.max(1e-6, Math.hypot(b.w, b.h) / 2 * (p.r ?? 1)) };
+  const a = (p.angle || 0) * Math.PI / 180, ux = Math.cos(a), uy = -Math.sin(a), h = Math.abs(b.w * ux) / 2 + Math.abs(b.h * uy) / 2;
+  return { x1: cx - ux * h, y1: cy - uy * h, x2: cx + ux * h, y2: cy + uy * h };
+}
+export function paintOf(ctx, p, b) {
+  if (!isGrad(p)) return p;
+  const q = gradGeom(p, b), g = p.g === 'radial' ? ctx.createRadialGradient(q.cx, q.cy, 0, q.cx, q.cy, q.r) : ctx.createLinearGradient(q.x1, q.y1, q.x2, q.y2);
+  for (const s of p.stops) g.addColorStop(Math.min(1, Math.max(0, s.o)), stopColor(s.c, s.a ?? 1));
+  return g;
+}
+export const cssPaint = p => !p ? '' : !isGrad(p) ? p : `${p.g === 'radial' ? 'radial-gradient(circle' : `linear-gradient(${90 - (p.angle || 0)}deg`}, ${p.stops.map(s => `${stopColor(s.c, s.a ?? 1)} ${Math.round(s.o * 100)}%`).join(', ')})`;
+function setShadow(ctx, sh) {
+  if (!sh) return; const m = ctx.getTransform(), k = Math.hypot(m.a, m.b);
+  ctx.shadowColor = stopColor(sh.c || '#000000', sh.a ?? 0.45); ctx.shadowBlur = (sh.blur ?? 6) * k; ctx.shadowOffsetX = (sh.x ?? 3) * k; ctx.shadowOffsetY = (sh.y ?? 3) * k;
+}
+const noShadow = ctx => { ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = ctx.shadowOffsetY = 0; };
+
 function drawText(ctx, s) {
   needFont(s.font);
-  const L = textLayout(s);
+  const L = textLayout(s), tb = isGrad(s.st && s.st.fill) ? { x: L.x0, y: L.y0, w: L.w, h: L.h } : null;
   ctx.translate(s.x, s.y); ctx.rotate(s.rot || 0);
-  ctx.fillStyle = (s.st && s.st.fill) || '#000'; ctx.textBaseline = 'alphabetic';
+  setShadow(ctx, s.st && s.st.shadow);
+  ctx.fillStyle = tb ? paintOf(ctx, s.st.fill, tb) : (s.st && s.st.fill) || '#000'; ctx.textBaseline = 'alphabetic';
   L.lines.forEach((ln, i) => {
     let x = s.align === 'center' ? -ln.w / 2 : s.align === 'right' ? -ln.w : 0;
     for (const r of ln.runs) {
@@ -321,16 +349,18 @@ export function drawShape(ctx, s) {
     if (st.ae === 'arrow' && d1) { const e = nodes[nodes.length - 1]; e.x -= d1.x * back; e.y -= d1.y * back; }
     path = buildPath([{ nodes, closed: false }, ...(s.subs || [])]);
   } else path = shapePath(s);
-  if (st.fill) { ctx.fillStyle = st.fill; ctx.fill(path, 'evenodd'); }
+  const bb = isGrad(st.fill) || isGrad(st.stroke) ? shapeBBox(s) : null;
+  setShadow(ctx, st.shadow);
+  if (st.fill) { ctx.fillStyle = paintOf(ctx, st.fill, bb); ctx.fill(path, 'evenodd'); noShadow(ctx); }
   if (st.stroke && st.sw > 0) {
-    ctx.strokeStyle = st.stroke; ctx.lineWidth = st.sw;
+    ctx.strokeStyle = paintOf(ctx, st.stroke, bb); ctx.lineWidth = st.sw;
     ctx.lineCap = st.cap || (st.dash === 'dotted' ? 'round' : 'butt'); ctx.lineJoin = st.join || 'miter';
     ctx.setLineDash(dashArr(st).map(v => v * st.sw));
     ctx.stroke(path);
     if (heads) {
       const n = s.nodes;
-      if (d0 && st.as && st.as !== 'none') drawHead(ctx, st.as, n[0], d0, st.sw, st.stroke, st.hs);
-      if (d1 && st.ae && st.ae !== 'none') drawHead(ctx, st.ae, n[n.length - 1], d1, st.sw, st.stroke, st.hs);
+      if (d0 && st.as && st.as !== 'none') drawHead(ctx, st.as, n[0], d0, st.sw, solidOf(st.stroke), st.hs);
+      if (d1 && st.ae && st.ae !== 'none') drawHead(ctx, st.ae, n[n.length - 1], d1, st.sw, solidOf(st.stroke), st.hs);
     }
   }
   ctx.restore();

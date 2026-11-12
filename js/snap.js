@@ -30,7 +30,11 @@ export function snapPoint(p, opt = {}) {
   const keys = [], near = [];
   const addKey = k => { keys.push(k); if ((k.kind === 'end' || k.kind === 'quad') && S.end) cand(k.kind, k); else if (k.kind === 'mid' && S.mid) cand('mid', k); else if (k.kind === 'center' && S.center) cand('center', k); };
   // the page itself: corners, edge midpoints, centre
-  for (const [x, y, kind] of [[0, 0, 'end'], [d.w, 0, 'end'], [d.w, d.h, 'end'], [0, d.h, 'end'], [d.w / 2, 0, 'mid'], [d.w, d.h / 2, 'mid'], [d.w / 2, d.h, 'mid'], [0, d.h / 2, 'mid'], [d.w / 2, d.h / 2, 'center']]) addKey({ x, y, kind });
+  const box = (x0, y0, w, h) => { for (const [x, y, kind] of [[x0, y0, 'end'], [x0 + w, y0, 'end'], [x0 + w, y0 + h, 'end'], [x0, y0 + h, 'end'], [x0 + w / 2, y0, 'mid'], [x0 + w, y0 + h / 2, 'mid'], [x0 + w / 2, y0 + h, 'mid'], [x0, y0 + h / 2, 'mid'], [x0 + w / 2, y0 + h / 2, 'center']]) addKey({ x, y, kind });
+    for (const [a, b] of [[[x0, y0], [x0 + w, y0]], [[x0 + w, y0], [x0 + w, y0 + h]], [[x0 + w, y0 + h], [x0, y0 + h]], [[x0, y0 + h], [x0, y0]]]) near.push({ a: { x: a[0], y: a[1] }, b: { x: b[0], y: b[1] }, real: true }); };
+  box(0, 0, d.w, d.h); // the page
+  for (const L of d.layers) if (L.type === 'raster' && L.visible && L.canvas && !(L.x === 0 && L.y === 0 && L.canvas.width === d.w && L.canvas.height === d.h) && L.canvas.width * L.canvas.height < 1e8) box(L.x, L.y, L.canvas.width, L.canvas.height); // image layers
+  if (d.sel && d.selBounds && !opt.noSel) { const b = d.selBounds; box(b.x, b.y, b.w, b.h); } // the current pixel selection
   let total = 0;
   for (const L of d.layers) {
     if (L.type !== 'vector' || !L.visible) continue;

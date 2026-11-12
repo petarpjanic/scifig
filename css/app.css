@@ -81,7 +81,7 @@ kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--dim); }
 #main { display: grid; grid-template-columns: 74px minmax(0, 1fr) 276px; grid-template-rows: minmax(0, 1fr); min-height: 0; }
 #main.bare { grid-template-columns: 0 minmax(0, 1fr) 0; }
 #main.bare #toolbar, #main.bare #panels { display: none; }
-#fsBtn { padding: 2px 8px; font-size: 14px; line-height: 1; height: 24px; }
+#fsBtn { padding: 2px 10px; height: 24px; white-space: nowrap; }
 #toolbar { background: var(--panel); border-right: 1px solid var(--line); display: grid; grid-template-columns: 32px 32px; align-content: start; justify-content: center; padding: 6px 0; gap: 2px 3px; overflow-y: auto; }
 #toolbar .tool { width: 32px; height: 28px; display: grid; place-items: center; border-radius: 6px; border: 1px solid transparent; background: none; padding: 0; color: var(--text); transition: background .08s; }
 #toolbar .tool:hover { background: var(--hover); }
@@ -253,3 +253,35 @@ input[type=range]:disabled { opacity: .4; }
 .menu-title { border-radius: 5px; }
 #menubar { padding: 0 10px; }
 ::-webkit-scrollbar { width: 9px; height: 9px; } ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 22%, transparent); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; } ::-webkit-scrollbar-track { background: transparent; }
+
+/* tabs: new-document button */
+.tab.add { color: var(--dim); padding: 0 12px; font-size: 15px; cursor: pointer; }
+.tab.add:hover { color: var(--text); background: var(--hover); }
+/* paint popover: colour | gradient | none */
+.ptabs2 { display: flex; gap: 4px; margin-bottom: 8px; }
+.ptabs2 button { flex: 1; padding: 3px 0; }
+.ptabs2 button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.gpresets { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; margin-bottom: 8px; }
+.gchip { height: 20px; padding: 0; border-radius: 4px; border: 1px solid var(--line); background-color: #fff !important; background-blend-mode: normal; }
+.grow2 { display: flex; align-items: center; gap: 6px; margin: 6px 0; color: var(--dim); }
+.grow2 select { flex: 1; } .grow2 input[type=number] { width: 56px; } .grow2 input[type=range] { flex: 1; }
+.gbar { position: relative; height: 22px; margin: 8px 6px 4px; cursor: copy; border-radius: 4px;
+  background-image: linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,#fff 25%,#fff 75%,#ccc 75%); background-size: 8px 8px; background-position: 0 0,4px 4px; }
+.gprev { position: absolute; inset: 0; border-radius: 4px; border: 1px solid var(--line); }
+.gstop { position: absolute; top: -4px; width: 12px; height: 28px; margin-left: -6px; border-radius: 3px; border: 2px solid #fff; box-shadow: 0 0 0 1px #000; cursor: ew-resize; }
+.gstop.on { border-color: var(--accent); box-shadow: 0 0 0 1px #fff, 0 0 0 3px var(--accent); }
+.popover.colorpop { width: 262px; }
+/* style templates */
+.stylegrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0 2px; }
+.stylechip { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px 2px 3px; font-size: 9.5px; color: var(--dim); background: var(--input); border-radius: 5px; overflow: hidden; white-space: nowrap; }
+.stylechip i { width: 30px; height: 20px; border-radius: 3px; display: block; box-sizing: border-box; }
+.stylechip:hover { color: var(--text); }
+/* dimension value editor on the drawing */
+.dim-edit { position: absolute; z-index: 7; width: 110px; font: 600 13px -apple-system, "Segoe UI", sans-serif; text-align: center; padding: 3px 4px; border: 2px solid var(--accent); border-radius: 5px; background: #fff; color: #000; user-select: text; -webkit-user-select: text; }
+/* new-document presets */
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.presets button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 4px; font-size: 11px; }
+.presets button small { color: var(--dim); font-size: 10px; }
+.presets button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.orient { display: flex; gap: 6px; margin: 2px 0 8px; }
+.orient button.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }

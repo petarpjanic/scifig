@@ -7,7 +7,7 @@ import { rgbToLab } from './color.js';
 import { hdFilter, developHD } from './hd.js';
 import { subjectMask } from './ai.js';
 import { cropDoc, scaleDoc, rotateDoc, flipDoc, transformLayer, mergeDown, flattenDoc, rasterizeLayer, duplicateLayer } from './ops.js';
-import { dialog, openPalette, el, popupMenu, toolPopover } from './ui.js';
+import { dialog, openPalette, el, popupMenu, toolPopover, paramUI } from './ui.js';
 import { pickFiles, saveDoc, exportDoc, openFiles, convertFiles } from './io.js';
 import { vectorTarget, curStyle, contentFill, editText } from './tools.js';
 
@@ -32,7 +32,7 @@ async function runFilter(f) {
     const c = mk(w, h); c.getContext('2d').putImageData(out, 0, 0);
     put(base); applyThroughSelection(d, L, c); app.refresh('render');
   };
-  const vals = defaultParams(f.params);
+  const FV = app.settings.filterVals || (app.settings.filterVals = {}), vals = { ...defaultParams(f.params), ...(FV[f.id] || {}) }; // last used settings
   try {
     if (f.params && f.params.length) {
       let t = null; apply(vals);
@@ -40,7 +40,7 @@ async function runFilter(f) {
       clearTimeout(t);
       if (!ok) { restore(); return; }
     }
-    apply(vals); if (!float) L.touch(); app.commit(f.title);
+    apply(vals); if (!float) L.touch(); app.commit(f.title); FV[f.id] = JSON.parse(JSON.stringify(vals)); app.saveSettings();
   } catch (e) { restore(); console.error(e); app.toast(f.title + ' failed: ' + e.message, 5000); }
 }
 function addAdjustment(a) {
@@ -163,23 +163,55 @@ export function registerCommands() {
   app.on('runFilter', runFilter); app.on('addAdjustment', addAdjustment);
 
   // ----- File -----
+  // ----- New: page presets, the clipboard image size, and the last choice remembered -----
+  const PRESETS = [['A4', 210, 297, 'mm'], ['A3', 297, 420, 'mm'], ['A5', 148, 210, 'mm'], ['Letter', 215.9, 279.4, 'mm'], ['Legal', 215.9, 355.6, 'mm'], ['Journal 1 col', 85, 85, 'mm'],
+    ['Journal 2 col', 180, 120, 'mm'], ['Poster A0', 841, 1189, 'mm'], ['Slide 16:9', 1920, 1080, 'px'], ['Full HD', 1920, 1080, 'px'], ['4K', 3840, 2160, 'px'], ['Square', 1080, 1080, 'px']];
   C('file.new', 'New…', async () => {
-    // start from the size of the image on the clipboard (system clipboard first, then what was copied inside the app)
+    // the image on the system clipboard (or copied inside SciFig) can set the size; it is pasted only when asked
     let clip = null;
-    try { if (navigator.clipboard && navigator.clipboard.read) { const items = await Promise.race([navigator.clipboard.read(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 4000))]);
+    try { if (navigator.clipboard && navigator.clipboard.read) { const items = await Promise.race([navigator.clipboard.read(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 3000))]);
       for (const it of items) { const t = it.types.find(q => q.startsWith('image/')); if (t) { clip = await createImageBitmap(await it.getType(t)); break; } } } } catch (e) { /* no permission or nothing there */ }
     if (!clip && app.clipboard && app.clipboard.type === 'pixels') clip = app.clipboard.canvas;
-    const v = await dialog({ title: 'New document', params: [{ id: 'name', label: 'Name', type: 'text', default: 'Figure ' + (app.docs.length + 1) }, { id: 'unit', label: 'Units', type: 'select', options: ['mm', 'cm', 'in', 'px'], default: clip ? 'px' : 'mm' },
-      { id: 'w', label: 'Width', type: 'number', default: clip ? clip.width : 180, min: 0 }, { id: 'h', label: 'Height', type: 'number', default: clip ? clip.height : 120, min: 0 }, { id: 'dpi', label: 'Resolution (dpi)', type: 'number', default: 300, min: 10 },
-      { id: 'bg', label: 'Background', type: 'select', options: ['white', 'transparent'], default: 'white' }, ...(clip ? [{ id: 'paste', label: 'Paste the clipboard image into it', type: 'check', default: true }] : [])],
-      text: clip ? `Sized to the image on the clipboard: ${clip.width} × ${clip.height} px.` : 'Width and height are in the chosen units. 180 mm is a typical two-column journal figure width, 85 mm a single column. With an image on the clipboard, the size is taken from it.' });
-    if (!v) return;
+    const last = app.settings.newDoc || { preset: 'Journal 2 col', w: 180, h: 120, unit: 'mm', dpi: 300, bg: 'white', land: false };
+    const v = { name: 'Figure ' + (app.docs.length + 1), unit: last.unit, w: last.w, h: last.h, dpi: last.dpi, bg: last.bg, paste: false };
+    let preset = last.preset, land = !!last.land;
+    if (clip) { preset = 'Clipboard'; v.unit = 'px'; v.w = clip.width; v.h = clip.height; land = false; }
+    const body = el('div'), grid = el('div', 'presets'), orient = el('div', 'orient'), form = el('div');
+    const items = [...(clip ? [['Clipboard', clip.width, clip.height, 'px']] : []), ...PRESETS];
+    const sized = ([, w, h]) => land !== w > h ? [h, w] : [w, h];
+    const pick = it => { preset = it[0]; const [w, h] = it[0] === 'Clipboard' ? [it[1], it[2]] : sized(it); v.w = w; v.h = h; v.unit = prevUnit = it[3]; draw(); };
+    const draw = () => {
+      grid.innerHTML = ''; orient.innerHTML = '';
+      for (const it of items) { const b = el('button', it[0] === preset ? 'on' : ''); b.append(el('span', null, it[0]), el('small', null, `${+it[1].toFixed(1)} × ${+it[2].toFixed(1)} ${it[3]}`)); b.onclick = () => pick(it); grid.append(b); }
+      for (const [o, t] of [[false, '▯ Portrait'], [true, '▭ Landscape']]) { const b = el('button', land === o ? 'on' : '', t); b.onclick = () => { if (land !== o) { land = o; [v.w, v.h] = [v.h, v.w]; draw(); } }; orient.append(b); }
+      form.innerHTML = '';
+      form.append(paramUI([{ id: 'name', label: 'Name', type: 'text' }, { id: 'w', label: 'Width', type: 'number', min: 0 }, { id: 'h', label: 'Height', type: 'number', min: 0 }, { id: 'unit', label: 'Units', type: 'select', options: ['mm', 'cm', 'in', 'pt', 'px'] },
+        { id: 'dpi', label: 'Resolution (dpi)', type: 'number', min: 10 }, { id: 'bg', label: 'Background', type: 'select', options: ['white', 'transparent'] }, ...(clip ? [{ id: 'paste', label: 'Also paste the clipboard image', type: 'check' }] : [])],
+        v, id => {
+          if (id === 'w' || id === 'h') { preset = 'Custom'; grid.querySelectorAll('.on').forEach(b => b.classList.remove('on')); }
+          if (id === 'unit') { const k = unitScale(prevUnit, v.dpi) / unitScale(v.unit, v.dpi); v.w = +(v.w * k).toFixed(3); v.h = +(v.h * k).toFixed(3); prevUnit = v.unit; draw(); } // same page, new unit
+        }));
+    };
+    let prevUnit = v.unit;
+    body.append(grid, orient, form); draw();
+    const ok = await dialog({ title: 'New document', body, values: v, text: clip ? `Sized to the image on the clipboard (${clip.width} × ${clip.height} px). Pick another size below if you want.` : null });
+    if (!ok) return;
     const k = unitScale(v.unit, v.dpi), w = Math.round(v.w * k), h = Math.round(v.h * k);
     if (!(w > 0 && h > 0) || w * h > 2e8) { app.toast('That size is not usable (too large or empty)'); return; }
-    const nd = newDoc({ name: v.name, w, h, dpi: v.dpi, unit: v.unit, background: v.bg === 'white' ? '#ffffff' : 'transparent' });
+    if (preset !== 'Clipboard') { app.settings.newDoc = { preset, w: v.w, h: v.h, unit: v.unit, dpi: v.dpi, bg: v.bg, land }; app.saveSettings(); }
+    const nd = newDoc({ name: v.name, w, h, dpi: v.dpi, unit: v.unit === 'px' ? 'px' : v.unit, background: v.bg === 'white' ? '#ffffff' : 'transparent' });
     if (clip && v.paste) { const L = nd.add(rasterLayer('Pasted', clip.width, clip.height, Math.round((w - clip.width) / 2), Math.round((h - clip.height) / 2))); L.ctx.drawImage(clip, 0, 0); nd.hist = []; nd.hi = -1; nd.commit('New'); nd.dirty = false; }
     app.addDoc(nd);
-  }, { enabled: null, shortcut: 'Alt+N', desc: 'Create a blank page in real units, or one sized to the image on the clipboard', keywords: 'create document page clipboard' });
+  }, { enabled: null, shortcut: 'Alt+N', desc: 'A blank page: A4, A3, Letter, journal columns, slides and screens, portrait or landscape, or the size of the image on the clipboard', keywords: 'create document page clipboard a4 letter landscape portrait paper' });
+  C('file.print', 'Print…', () => {
+    const d = D(), c = flatten(d, 1, { background: '#ffffff' }), wmm = d.w / d.dpi * 25.4, hmm = d.h / d.dpi * 25.4, f = document.createElement('iframe');
+    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.append(f);
+    const doc = f.contentDocument; doc.open();
+    doc.write(`<!doctype html><title>${d.name}</title><style>@page { size: auto; margin: 10mm; } html, body { margin: 0; } img { display: block; margin: 0 auto; width: ${wmm.toFixed(2)}mm; max-width: 100%; height: auto; }</style><img src="${c.toDataURL('image/png')}">`);
+    doc.close();
+    const img = doc.querySelector('img'), go = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 2000); };
+    if (img.complete) setTimeout(go, 50); else img.onload = go;
+  }, { shortcut: 'Mod+P', desc: 'Print the picture at its real size (shrunk only if it does not fit the paper). Choose paper, orientation or "Save as PDF" in the print window.', keywords: 'print paper pdf' });
   C('file.open', 'Open…', () => pickFiles(false), { enabled: null, shortcut: 'Mod+O', desc: 'Open PNG, JPEG, TIFF, PSD, SVG, PDF, AI, EPS or SciFig files', keywords: 'import load psd eps svg tiff pdf' });
   C('file.place', 'Place as Layers…', () => pickFiles(true), { desc: 'Import a file into the current document as new layers', keywords: 'import embed insert image' });
   C('file.save', 'Save', () => saveDoc(D(), false), { shortcut: 'Mod+S', desc: 'Save the layered document (.scifig)' });
@@ -395,7 +427,7 @@ export function registerCommands() {
 
   const adj = () => [...app.adjustments.keys()].map(k => 'adjust.' + k);
   app.menus = [
-    ['File', ['file.new', 'file.open', 'file.place', '-', 'file.save', 'file.saveAs', ['Export', ['export.png', 'export.jpg', 'export.tiff', 'export.webp', 'export.svg', 'export.psd', '-', 'export.tiff16', 'export.tiff32', 'export.png16']], 'file.convert', '-', 'file.close']],
+    ['File', ['file.new', 'file.open', 'file.place', '-', 'file.save', 'file.saveAs', 'file.print', ['Export', ['export.png', 'export.jpg', 'export.tiff', 'export.webp', 'export.svg', 'export.psd', '-', 'export.tiff16', 'export.tiff32', 'export.png16']], 'file.convert', '-', 'file.close']],
     ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', 'edit.duplicate', '-', 'edit.fill', 'edit.contentFill', '-', 'edit.transform', 'edit.transformLayer']],
     ['Image', [['Adjustments (new layer)', adj], 'image.autoLevels', '-', 'image.size', 'image.canvas', 'image.cropSel', '-', 'image.rotCW', 'image.rotCCW', 'image.flipH', 'image.flipV', '-', 'image.units', 'image.setScale']],
     ['Layer', ['layer.newRaster', 'layer.newVector', ['New Adjustment Layer', adj], 'layer.fromSel', '-', ['Mask', ['layer.maskAdd', 'layer.maskHide', '-', 'layer.maskInvert', 'layer.maskApply', 'layer.maskDelete', '-', 'select.fromMask']], '-', 'layer.duplicate', 'layer.delete', 'layer.up', 'layer.down', '-', 'layer.merge', 'layer.rasterize', 'layer.flatten', '-', 'edit.transform']],
@@ -459,9 +491,9 @@ The bar under the menu also has X, Y, W, H, rotation, and for a single line its 
   H('Guide: the options bar and the right-click menu', `The bar under the menu changes with what you are doing: first the options of the tool, then the properties of the selected object (line colour, width, fill, dashes, arrowheads, font…) or of the next shape you will draw.
 Right-click in the picture for a menu that fits the tool, the object under the cursor and the selection. With a brush, eraser or stamp it opens the size and hardness sliders.
 Hover over any button to see its name and keyboard shortcut.`, 'context menu properties toolbar tooltip');
-  H('Guide: arrows, dashes, dots, dimensions and splines', `Line style is in the options bar: solid, dashed, dotted (round dots) or dash-dot, with Dash and Gap lengths in line widths, so a smaller Gap gives a denser line. Start and End add arrowheads or markers: arrow, open arrow, bar, dot, circle, square, diamond; Head % sets their size.
-Dimension tool (K): click two points, then click where the dimension line should sit. Points snapped onto a shape stay attached, so the dimension does two jobs. As an annotation it shows the true length and follows the shape. As a constraint it drives the shape: type a Length in the options bar and the line, rectangle or circle is resized (two different shapes are moved apart), and Lock keeps that length whenever the shape is edited (locked labels are bold).
-"Show in export" off makes a dimension a working constraint only; View ▸ Show Dimensions hides them all. Decimals, text size, font, arrowheads, offset and a custom label are in the options bar.
+  H('Guide: arrows, dashes, dots, dimensions and splines', `Style templates in the side panel give one-click looks (outline, card, metal, glass, gradients, glow, highlight). Fill and Stroke open a picker with Colour, Gradient (presets, linear or radial, angle, editable stops) and None, and Drop shadow adds a soft shadow. Line style is in the side panel: solid, dashed, dotted (round dots) or dash-dot, with Dash and Gap lengths in line widths, so a smaller Gap gives a denser line. Start and End add arrowheads or markers: arrow, open arrow, bar, dot, circle, square, diamond; Head % sets their size.
+Dimension tool (K) works like a Fusion 360 sketch dimension. Click a line, an edge of a rectangle or a circle (or click two points), then click where the dimension should sit and type the value: the shape changes to match. Dimensions are driving by default, so the shape keeps that length when you drag it; untick "Driving" in the side panel for a reference dimension that only shows the length and follows the shape. Double-click a value (or click the value of a selected dimension) to change it later; a unit can be typed (25mm, 1in). Locked values are bold.
+"Show in export" off makes a dimension a working constraint only; View ▸ Show Dimensions hides them all. Text size, font, arrows and decimals are in the side panel and are remembered for the next dimensions.
 Spline tool (Y): click points and a smooth curve passes through them. In Edit Nodes (A) the round nodes are spline points; drag them and the curve follows. Drag a handle, or right-click a node, to turn it into an ordinary smooth or corner point. Smooth sets how round the spline is. The Pen (P) draws bezier curves with handles directly.`, 'arrow dash dot dimension spline bezier marker');
   H('Guide: layer masks', `A mask hides parts of a layer without erasing them. It works on image, vector and adjustment layers.
 Add one with ◐ in the Layers panel (with a selection active, only the selection stays visible). A second thumbnail appears: click it and paint with black to hide, white to show (X swaps the colours); gradients and the bucket work too. Click the first thumbnail to paint on the picture again.

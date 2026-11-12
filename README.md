@@ -69,3 +69,13 @@ Google Fonts for web fonts. Licences of vendored code: LibRaw (LGPL/CDDL), heic-
 - Remove tool / Content-Aware Fill use the MI-GAN neural inpainting model (downloaded on first use), with the PatchMatch method as the offline option.
 - File ▸ New takes its size from the image on the clipboard.
 - `manifest.json` + `icon.svg` so the site can be installed as an app window.
+
+## Added in v4 (2026-11-12)
+
+- Tool and object options in a foldable sidebar over the picture (`#npanel`); labelled tool groups; unit menu on every length field.
+- Trackpad: two fingers pan, pinch zooms; a mouse wheel zooms. `serve.py` = no-cache local server.
+- Dimensions behave like Fusion 360: click an edge or circle, type the value on the drawing, driving by default (held during drags), reference when unticked; style remembered (`settings.dimStyle`).
+- Gradient and drop-shadow paints for vector shapes (`js/styles.js`: presets, style templates, paint popover), exported to SVG.
+- File ▸ New with page presets (A4, Letter, journal columns, screens), portrait/landscape, remembered; File ▸ Print; filter settings remembered.
+- Marquee, crop and gradient snap; image-layer edges and the selection are snap targets.
+- Tests: `?sample&test`, `?test2`, `?sample&test3`.

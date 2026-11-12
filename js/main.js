@@ -97,4 +97,5 @@ const q = new URLSearchParams(location.search);
   window.scifigReady = window.figuraReady = true;
   if (q.has('test')) import('../tests/selftest.js');
   if (q.has('test2')) import('../tests/selftest2.js');
+  if (q.has('test3')) import('../tests/selftest3.js');
 })();
