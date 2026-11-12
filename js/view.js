@@ -94,8 +94,11 @@ export const view = {
   wheel(e) {
     e.preventDefault(); const d = app.doc; if (!d) return;
     const r = this.over.getBoundingClientRect();
-    // the wheel zooms at the cursor (View ▸ Scroll Wheel Zooms); with that off it scrolls and Cmd/Ctrl/Alt + wheel zooms
-    const zoomKey = e.ctrlKey || e.metaKey || e.altKey, wz = app.settings.wheelZoom !== false;
+    // Trackpad: two fingers pan, pinch zooms (the browser sends pinch as Ctrl + wheel). Mouse wheel: zooms at the
+    // cursor (View ▸ Mouse Wheel Zooms; Shift + wheel scrolls). Cmd/Alt + wheel always zooms.
+    // Chrome and Safari report wheelDeltaY = -3 × deltaY for trackpads; a mouse notch reports a multiple of 120.
+    const pad = e.deltaX !== 0 || (e.wheelDeltaY ? e.wheelDeltaY === -3 * e.deltaY : e.deltaMode === 0 && !Number.isInteger(e.deltaY));
+    const zoomKey = e.ctrlKey || e.metaKey || e.altKey, wz = app.settings.wheelZoom !== false && !pad;
     if (zoomKey || (wz && !e.shiftKey)) this.zoomAt(Math.exp(-e.deltaY * (e.ctrlKey && !e.metaKey && Math.abs(e.deltaY) < 30 ? 0.012 : 0.003)), e.clientX - r.left, e.clientY - r.top);
     else { const v = d.view; v.tx -= e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX; v.ty -= e.shiftKey && !e.deltaX ? 0 : e.deltaY; v.fit = false; app.refresh('render'); }
   },

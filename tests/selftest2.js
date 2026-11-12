@@ -184,6 +184,9 @@ async function run() {
 
   // ---- view and menus ----
   view.fit(); const z0 = d.view.zoom; over.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true, cancelable: true, ...cl(100, 100) })); ok('wheel zooms', d.view.zoom > z0 * 1.3, d.view.zoom / z0);
+  view.fit(); const v0 = { ...d.view }; const tp = new WheelEvent('wheel', { deltaY: 12.5, bubbles: true, cancelable: true, ...cl(100, 100) }); Object.defineProperty(tp, 'wheelDeltaY', { value: -37.5 }); over.dispatchEvent(tp); // what Chrome and Safari send for a trackpad
+  ok('trackpad two-finger scroll pans', d.view.zoom === v0.zoom && near(d.view.ty, v0.ty - 12.5), `${d.view.zoom / v0.zoom} ${d.view.ty - v0.ty}`);
+  over.dispatchEvent(new WheelEvent('wheel', { deltaY: -6, ctrlKey: true, bubbles: true, cancelable: true, ...cl(100, 100) })); ok('trackpad pinch zooms', d.view.zoom > v0.zoom);
   view.fit(); app.setTool('zoom'); drag(100, 100, 200, 150); ok('zoom tool drags an area', d.view.zoom > z0 * 2 && Math.abs(view.S({ x: 150, y: 125 }).x - view.W / 2) < 3, d.view.zoom / z0); view.fit();
   app.setTool('select'); over.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...cl(550, 380) })); await sleep(30);
   ok('right-click menu', !!document.querySelector('.menu .item')); document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
