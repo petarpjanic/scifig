@@ -1,7 +1,7 @@
 // Interface: parameter forms, dialogs, menus, toolbar, options bar, panels, status bar, command palette.
 import { app } from './app.js';
 import { view } from './view.js';
-import { fmt, BLENDS, bboxOf, transformShape, mTranslate, mScaleAbout, mRotateAbout, dist, UNITS, HEADS, DASHES, WEBFONTS, needFont, smoothShape } from './core.js';
+import { fmt, unitScale, BLENDS, bboxOf, transformShape, mTranslate, mScaleAbout, mRotateAbout, dist, UNITS, HEADS, DASHES, WEBFONTS, needFont, smoothShape } from './core.js';
 import { histogram, curveLut } from './imaging.js';
 import { thumb, maskThumb } from './ops.js';
 import { TOOL_ORDER } from './tools.js';
@@ -34,6 +34,19 @@ export function paramUI(defs, vals, onChange, inline = false) {
     } else if (p.type === 'number') {
       const n = el('input'); n.type = 'number'; if (p.min != null) n.min = p.min; if (p.max != null) n.max = p.max; n.step = p.step || 'any'; n.value = v;
       n.onchange = () => fire(+n.value || 0, true); row.classList.add('wide'); row.append(n);
+    } else if (p.type === 'len') {
+      // a length kept in pixels, shown in a unit of your choice; a unit can also be typed after the number (5mm, 40 px)
+      const d = app.doc, FU = app.settings.fieldUnits || (app.settings.fieldUnits = {}), units = [...new Set([d.unit, 'px', 'mm', 'cm', 'in', 'pt'])], base = p.unit || d.unit;
+      let u = units.includes(FU[id]) ? FU[id] : base;
+      const k = x => x === d.unit ? d.pxPerUnit : unitScale(x, d.dpi), n = el('input'), s = el('select'); n.type = 'text'; n.spellcheck = false;
+      for (const x of units) s.append(el('option', null, x)); s.value = u; s.title = 'Unit for this value';
+      const show = () => { n.value = fmt((vals[id] ?? 0) / k(u), u === 'px' ? 2 : 3); };
+      n.onchange = () => { const m = /^\s*(-?\d*\.?\d+)\s*([a-zµ]*)\s*$/i.exec(n.value), su = m ? m[2].toLowerCase() : '';
+        if (!m || (su && !units.includes(su))) { app.toast('Type a number, optionally with a unit: ' + units.join(', ')); show(); return; }
+        const px = parseFloat(m[1]) * k(su || u); if (p.min != null && px < p.min) { show(); return; } vals[id] = px; show(); fire(px, true); };
+      n.onfocus = () => n.select();
+      s.onchange = () => { u = s.value; if (u === base) delete FU[id]; else FU[id] = u; app.saveSettings(); show(); };
+      show(); row.classList.add('lenrow'); row.append(n, s);
     } else if (p.type === 'check') {
       const l = el('label'), c = el('input'); c.type = 'checkbox'; c.checked = !!v; c.onchange = () => fire(c.checked, true);
       l.append(c, ' ' + p.label); l.style.display = 'flex'; l.style.gap = '6px'; l.style.color = 'inherit'; row.classList.add('full'); row.append(l);
@@ -171,6 +184,7 @@ function buildToolbar() {
   const bar = $('toolbar'); bar.innerHTML = '';
   for (const id of TOOL_ORDER) {
     if (id === '-') { bar.append(el('div', 'tsep')); continue; }
+    if (id[0] === '#') { bar.append(el('div', 'tlabel', id.slice(1))); continue; }
     const t = app.tools.get(id); if (!t) continue;
     const b = el('button', 'tool'); b.dataset.tool = id; b.title = `${t.title}  (${t.keyb})\n${t.hint || ''}`;
     b.innerHTML = `<svg viewBox="0 0 20 20">${t.icon || ICONS[id] || '<circle cx="10" cy="10" r="6"/>'}</svg>`;
@@ -182,16 +196,17 @@ function buildToolbar() {
 const FONTS = ['Arial', 'Helvetica', 'Times New Roman', 'Georgia', 'Courier New', 'Verdana', 'Trebuchet MS', 'Palatino', 'Garamond', 'Tahoma', 'Impact', 'Comic Sans MS', 'Menlo', 'system-ui'];
 const fontOpts = cur => { const loc = app.settings.localFonts || [], all = [...FONTS, ['-', '── Web fonts ──'], ...WEBFONTS, ...(loc.length ? [['-', '── This computer ──'], ...loc] : [])]; if (cur && !all.includes(cur)) all.unshift(cur); return all; };
 const DASH_OPTS = Object.keys(DASHES), VECTOR_TOOLS = ['line', 'spline', 'pen', 'rect', 'ellipse', 'dim', 'text'];
-const styleDefs = st => [{ id: 'stroke', label: 'Stroke', type: 'color', none: true }, { id: 'swPt', label: 'W', type: 'number', min: 0, step: 0.25, tip: 'Line width in points' },
+const styleDefs = st => [{ id: 'stroke', label: 'Stroke', type: 'color', none: true }, { id: 'sw', label: 'Width', type: 'len', unit: 'pt', min: 0, tip: 'Line width' },
   { id: 'fill', label: 'Fill', type: 'color', none: true, fallback: '#ffffff' }, { id: 'dash', label: 'Line', type: 'select', options: DASH_OPTS, tip: 'Solid, dashed, dotted or dash-dot' },
   ...(st.dash && st.dash !== 'solid' ? [...(st.dash !== 'dotted' ? [{ id: 'dl', label: 'Dash', type: 'number', min: 0.1, step: 0.5, tip: 'Dash length, in line widths' }] : []), { id: 'dg', label: 'Gap', type: 'number', min: 0.1, step: 0.5, tip: 'Gap between dashes or dots, in line widths (smaller = denser)' }] : []),
   { id: 'as', label: 'Start', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the start' }, { id: 'ae', label: 'End', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the end' },
   ...((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none') ? [{ id: 'hsPct', label: 'Head %', type: 'number', min: 10, step: 10, tip: 'Arrowhead size' }] : []),
   { id: 'alphaPct', label: 'Opacity', type: 'number', min: 0, max: 100, tip: 'Opacity in percent' }];
-const textDefs = f => [{ id: 'font', label: 'Font', type: 'select', options: fontOpts(f) }, { id: 'sizePt', label: 'Size', type: 'number', min: 1, step: 0.5, tip: 'Text size in points' }, { id: 'bold', label: 'B', type: 'check' }, { id: 'italic', label: 'I', type: 'check' }, { id: 'align', label: 'Align', type: 'select', options: ['left', 'center', 'right'] }];
-const styleVals = (st, d) => ({ stroke: st.stroke || null, swPt: +fmt((st.sw || 0) / d.ptPx, 3), fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100) });
+const textDefs = f => [{ id: 'font', label: 'Font', type: 'select', options: fontOpts(f) }, { id: 'size', label: 'Size', type: 'len', unit: 'pt', min: 0.01, tip: 'Text size' }, { id: 'bold', label: 'B', type: 'check' }, { id: 'italic', label: 'I', type: 'check' }, { id: 'align', label: 'Align', type: 'select', options: ['left', 'center', 'right'] }];
+const styleVals = (st, d) => ({ stroke: st.stroke || null, sw: st.sw || 0, fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100) });
 const sep = () => el('span', 'osep');
 const grp = (label, ...nodes) => { const g = el('div', 'grp'); g.append(el('span', 'gl', label), ...nodes); return g; };
+const IN = false; // the options sidebar stacks its fields
 function objectBar(bar, d) {
   const sel = d.selected(), S = app.settings, shapes = sel.map(o => o.s), s0 = shapes[0], U = v => +fmt(d.toU(v), 3);
   const touchAll = () => { for (const o of sel) o.L.touch(); };
@@ -200,42 +215,42 @@ function objectBar(bar, d) {
   if (geo.length) {
     const st = geo[0].st || {};
     bar.append(grp('Line', paramUI(styleDefs(st).filter(p => geo[0].type !== 'dim' || !['fill', 'dash', 'dl', 'dg'].includes(p.id)), styleVals(st, d), (id, v, fin) => {
-      for (const s of geo) { const t = s.st || (s.st = {}); if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'swPt') t.sw = v * d.ptPx; else if (id === 'hsPct') t.hs = v / 100; else t[id] = v; if (id === 'dash') { delete t.dl; delete t.dg; } }
-      if (id === 'hsPct') S.style.hs = v / 100; else if (id !== 'alphaPct') S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings();
+      for (const s of geo) { const t = s.st || (s.st = {}); if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'hsPct') t.hs = v / 100; else t[id] = v; if (id === 'dash') { delete t.dl; delete t.dg; } }
+      if (id === 'hsPct') S.style.hs = v / 100; else if (id === 'sw') S.style.swPt = v / d.ptPx; else if (id !== 'alphaPct') S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings();
       touchAll(); if (fin) app.commit('Style'); else app.refresh('render');
-    }, true)));
+    }, IN)));
     const sp = geo.filter(s => s.type === 'path' && s.nodes.some(n => n.a));
-    if (sp.length) bar.append(paramUI([{ id: 't', label: 'Smooth', type: 'number', min: 0, max: 3, step: 0.1, tip: 'Spline smoothness: 0 = straight segments, 1 = natural, more = rounder' }], { t: sp[0].tension ?? 1 }, (id, v) => { for (const s of sp) { s.tension = v; smoothShape(s); } touchAll(); app.commit('Spline smoothness'); }, true));
+    if (sp.length) bar.append(paramUI([{ id: 't', label: 'Smooth', type: 'number', min: 0, max: 3, step: 0.1, tip: 'Spline smoothness: 0 = straight segments, 1 = natural, more = rounder' }], { t: sp[0].tension ?? 1 }, (id, v) => { for (const s of sp) { s.tension = v; smoothShape(s); } touchAll(); app.commit('Spline smoothness'); }, IN));
   }
   const dims = shapes.filter(s => s.type === 'dim');
   if (texts.length || dims.length) {
-    const t0 = texts[0] || dims[0], tv = { font: t0.font || 'Arial', sizePt: +fmt(t0.size / d.ptPx, 2), align: t0.align || 'left', bold: !!t0.bold, italic: !!t0.italic, fill: (t0.st && t0.st.fill) || '#000000', dec: t0.dec ?? 2, label: t0.text || '' };
+    const t0 = texts[0] || dims[0], tv = { font: t0.font || 'Arial', size: t0.size, align: t0.align || 'left', bold: !!t0.bold, italic: !!t0.italic, fill: (t0.st && t0.st.fill) || '#000000', dec: t0.dec ?? 2, label: t0.text || '' };
     const defs = texts.length ? [...textDefs(tv.font), { id: 'fill', label: 'Colour', type: 'color', fallback: '#000000' }] : [...textDefs(tv.font).slice(0, 2), { id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6 }, { id: 'label', label: 'Label', type: 'text', tip: 'Leave empty to show the measured length' }];
     if (dims.length === 1 && sel.length === 1) { // a dimension both labels and constrains
       const dm = dims[0], att = (dm.ra ? 1 : 0) + (dm.rb ? 1 : 0);
-      bar.append(grp('Dimension', paramUI([{ id: 'len', label: `Length (${d.unit})`, type: 'number', min: 0, tip: att ? 'Type a new length: the attached shape is resized or moved to match' : 'Not attached to a shape: this only moves the end of the dimension' },
+      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Length', type: 'len', min: 1e-9, tip: att ? 'Type a new length: the attached shape is resized or moved to match' : 'Not attached to a shape: this only moves the end of the dimension' },
         { id: 'lock', label: 'Lock', type: 'check', tip: 'Constraint: keep this length when the shape is edited' }, { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: the dimension is a working constraint only, shown faintly and left out of exported files' },
-        { id: 'off', label: 'Offset', type: 'number', tip: 'Distance of the dimension line from the measured points' }],
-        { len: U(dist(dm.a, dm.b)), lock: dm.lock != null, note: dm.note !== false, off: U(dm.off || 0) }, (id, v) => {
-          if (id === 'len' && v > 0) driveDim(d, dm, d.fromU(v)); else if (id === 'lock') { if (v) dm.lock = dist(dm.a, dm.b); else delete dm.lock; } else if (id === 'note') dm.note = v; else if (id === 'off') dm.off = d.fromU(v);
+        { id: 'off', label: 'Offset', type: 'len', tip: 'Distance of the dimension line from the measured points' }],
+        { len: dist(dm.a, dm.b), lock: dm.lock != null, note: dm.note !== false, off: dm.off || 0 }, (id, v) => {
+          if (id === 'len' && v > 0) driveDim(d, dm, v); else if (id === 'lock') { if (v) dm.lock = dist(dm.a, dm.b); else delete dm.lock; } else if (id === 'note') dm.note = v; else if (id === 'off') dm.off = v;
           touchAll(); app.commit('Dimension');
-        }, true), el('span', 'gl', att === 2 ? 'attached' : att ? 'one end attached' : 'free')));
+        }, IN), el('span', 'gl', att === 2 ? 'attached to the shape' : att ? 'one end attached' : 'not attached')));
     }
     bar.append(grp(texts.length ? 'Text' : 'Label', paramUI(defs, tv, (id, v, fin) => {
       if (id === 'font') needFont(v);
-      for (const s of [...texts, ...dims]) { if (id === 'sizePt') s.size = v * d.ptPx; else if (id === 'fill') (s.st || (s.st = {})).fill = v || '#000000'; else if (id === 'label') s.text = v || null; else s[id] = v; }
-      if (texts.length && id !== 'fill') { S.text[id] = v; app.saveSettings(); }
+      for (const s of [...texts, ...dims]) { if (id === 'size') s.size = v; else if (id === 'fill') (s.st || (s.st = {})).fill = v || '#000000'; else if (id === 'label') s.text = v || null; else s[id] = v; }
+      if (texts.length && id !== 'fill') { if (id === 'size') S.text.sizePt = v / d.ptPx; else S.text[id] = v; app.saveSettings(); }
       touchAll(); if (fin) app.commit('Text style'); else app.refresh('render');
-    }, true)));
+    }, IN)));
   }
   // exact geometry in document units
-  const b = bboxOf(shapes), g = { x: U(b.x), y: U(b.y), w: U(b.w), h: U(b.h) }, defs = [{ id: 'x', label: 'X', type: 'number', tip: `Left edge (${d.unit})` }, { id: 'y', label: 'Y', type: 'number', tip: `Top edge (${d.unit})` }, { id: 'w', label: 'W', type: 'number', min: 0, tip: `Width (${d.unit})` }, { id: 'h', label: 'H', type: 'number', min: 0, tip: `Height (${d.unit})` }];
+  const b = bboxOf(shapes), g = { x: b.x, y: b.y, w: b.w, h: b.h }, defs = [{ id: 'x', label: 'X', type: 'len', tip: 'Left edge' }, { id: 'y', label: 'Y', type: 'len', tip: 'Top edge' }, { id: 'w', label: 'Width', type: 'len', min: 0 }, { id: 'h', label: 'Height', type: 'len', min: 0 }];
   const line = sel.length === 1 && s0.type === 'path' && !s0.closed && s0.nodes.length === 2 && !s0.subs ? s0 : null;
-  if (line) { const [a, c] = line.nodes; g.len = U(dist(a, c)); g.ang = +fmt(((Math.atan2(-(c.y - a.y), c.x - a.x) * 180 / Math.PI) + 360) % 360, 2); defs.push({ id: 'len', label: 'Length', type: 'number', min: 0 }, { id: 'ang', label: 'Angle °', type: 'number' }); }
-  else if (sel.length === 1 && (s0.type === 'rect' || s0.type === 'ellipse' || s0.type === 'text')) { g.rot = +fmt(-(s0.rot || 0) * 180 / Math.PI, 2); defs.push({ id: 'rot', label: 'Rotate °', type: 'number' }); }
-  else { g.turn = 0; defs.push({ id: 'turn', label: 'Rotate by °', type: 'number', tip: 'Rotate the selection counter-clockwise by this angle' }); }
-  bar.append(grp('Position', paramUI(defs, g, (id, v) => {
-    const px = d.fromU(v); let m;
+  if (line) { const [a, c] = line.nodes; g.len = dist(a, c); g.ang = +fmt(((Math.atan2(-(c.y - a.y), c.x - a.x) * 180 / Math.PI) + 360) % 360, 2); defs.push({ id: 'len', label: 'Length', type: 'len', min: 0 }, { id: 'ang', label: 'Angle °', type: 'number' }); }
+  else if (sel.length === 1 && (s0.type === 'rect' || s0.type === 'ellipse' || s0.type === 'text')) { g.rot = +fmt(-(s0.rot || 0) * 180 / Math.PI, 2); defs.push({ id: 'rot', label: 'Angle °', type: 'number' }); }
+  else { g.turn = 0; defs.push({ id: 'turn', label: 'Turn °', type: 'number', tip: 'Rotate the selection counter-clockwise by this angle' }); }
+  bar.append(grp('Position and size', paramUI(defs, g, (id, v) => {
+    const px = v; let m;
     if (id === 'x') m = mTranslate(px - b.x, 0); else if (id === 'y') m = mTranslate(0, px - b.y);
     else if (id === 'w' && b.w > 0 && px > 0) m = mScaleAbout(px / b.w, 1, { x: b.x, y: b.y }); else if (id === 'h' && b.h > 0 && px > 0) m = mScaleAbout(1, px / b.h, { x: b.x, y: b.y });
     else if (id === 'rot') s0.rot = -v * Math.PI / 180;
@@ -243,28 +258,30 @@ function objectBar(bar, d) {
     else if (id === 'len' || id === 'ang') { const [a, c] = line.nodes, L = id === 'len' ? px : dist(a, c), an = (id === 'ang' ? v : g.ang) * Math.PI / 180; c.x = a.x + L * Math.cos(an); c.y = a.y - L * Math.sin(an); }
     if (m) for (const s of shapes) transformShape(s, m);
     touchAll(); app.commit('Transform');
-  }, true)));
+  }, IN)));
 }
 function buildOptbar() {
   const t = app.tool, bar = $('optbar'), d = app.doc; if (!t) return;
   if (bar.contains(document.activeElement) && document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'range') return; // do not rebuild under a slider being dragged
-  bar.innerHTML = '';
-  bar.appendChild(el('span', 'tool-name', t.title)).title = `${t.title}  (${t.keyb})\n${t.hint || ''}`;
-  const tb = d && t.bar && t.bar();
-  if (tb) bar.append(paramUI(tb.defs, tb.vals, (id, v) => tb.set(id, v), true));
-  else if (t.options && t.options.length) bar.append(paramUI(t.options, t.opt, () => { app.saveSettings(); app.refresh('overlay'); }, true));
-  if (d && d.editMask && d.active && d.active.mask) bar.appendChild(el('span', 'badge', 'Editing mask: white shows, black hides')).title = 'Click the layer thumbnail in the Layers panel to paint on the image again';
-  if (d && d.chan.edit) bar.appendChild(el('span', 'badge', 'Channel lock on')).title = 'Only the channels selected in the Channels panel are changed by painting and filters';
+  const top = bar.scrollTop; bar.innerHTML = '';
+  $('npTitle').textContent = t.title; $('npHead').title = `${t.title}  (${t.keyb})\n${t.hint || ''}\nClick to fold or unfold this panel`;
   if (!d) return;
-  if (d.selShapes.size && d.selected().length) { objectBar(bar, d); return; }
-  if (VECTOR_TOOLS.includes(t.id)) { // style of the next shape
+  const tb = t.bar && t.bar();
+  if (tb) bar.append(paramUI(tb.defs, tb.vals, (id, v) => tb.set(id, v), IN));
+  else if (t.options && t.options.length) bar.append(paramUI(t.options, t.opt, () => { app.saveSettings(); app.refresh('overlay'); }, IN));
+  if (d.editMask && d.active && d.active.mask) bar.appendChild(el('span', 'badge', 'Editing mask: white shows, black hides')).title = 'Click the layer thumbnail in the Layers panel to paint on the image again';
+  if (d.chan.edit) bar.appendChild(el('span', 'badge', 'Channel lock on')).title = 'Only the channels selected in the Channels panel are changed by painting and filters';
+  if (d.selShapes.size && d.selected().length) objectBar(bar, d);
+  else if (VECTOR_TOOLS.includes(t.id)) { // style of the next shape
     const S = app.settings;
-    if (t.id === 'text') bar.append(sep(), paramUI(textDefs(S.text.font), S.text, (id, v) => { if (id === 'font') needFont(v); app.saveSettings(); }, true));
+    if (t.id === 'text') bar.append(grp('New text', paramUI(textDefs(S.text.font), { ...S.text, size: S.text.sizePt * d.ptPx }, (id, v) => { if (id === 'font') needFont(v); if (id === 'size') S.text.sizePt = v / d.ptPx; else S.text[id] = v; app.saveSettings(); }, IN)));
     else {
       const vals = styleVals({ ...S.style, sw: S.style.swPt * d.ptPx }, d);
-      bar.append(sep(), paramUI(styleDefs(S.style), vals, (id, v) => { if (id === 'alphaPct') S.style.alpha = v / 100; else if (id === 'hsPct') S.style.hs = v / 100; else S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings(); if (['dash', 'as', 'ae'].includes(id)) app.refresh('tool'); }, true));
+      bar.append(grp('New shape', paramUI(styleDefs(S.style), vals, (id, v) => { if (id === 'alphaPct') S.style.alpha = v / 100; else if (id === 'hsPct') S.style.hs = v / 100; else if (id === 'sw') S.style.swPt = v / d.ptPx; else S.style[id] = v; if (id === 'dash') { delete S.style.dl; delete S.style.dg; } app.saveSettings(); if (['dash', 'as', 'ae'].includes(id)) app.refresh('tool'); }, IN)));
     }
   }
+  if (!bar.children.length) bar.append(el('div', 'props-note', t.hint || ''));
+  bar.scrollTop = top;
 }
 function syncTool() {
   const t = app.tool; if (!t) return;
@@ -514,6 +531,8 @@ export function initUI() {
   document.querySelectorAll('[data-cmd]').forEach(b => { b.onclick = () => app.run(b.dataset.cmd); b.title = tipOf(b.dataset.cmd); });
   // panel tabs (Layers | Channels) and collapsible panels
   document.querySelectorAll('#p-layers [data-tab]').forEach(t => { t.onclick = () => { document.querySelectorAll('#p-layers [data-tab]').forEach(q => q.classList.toggle('on', q === t)); $('tabLayers').hidden = t.dataset.tab !== 'layers'; $('tabChannels').hidden = t.dataset.tab !== 'channels'; }; });
+  const np = $('npanel'); np.classList.toggle('min', !!app.settings.npMin); $('npHead').onclick = () => { app.settings.npMin = !np.classList.toggle('min') ? false : true; app.saveSettings(); };
+  np.addEventListener('wheel', e => e.stopPropagation()); np.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.blur) e.target.blur(); });
   document.querySelectorAll('.panel > h3.fold').forEach(h => { h.title = 'Click to fold or unfold'; h.onclick = () => h.parentElement.classList.toggle('folded'); });
   document.documentElement.dataset.theme = app.settings.theme;
   $('stage').classList.toggle('norulers', !app.settings.rulers);

@@ -978,11 +978,11 @@ const transform = {
   // numeric boxes for the options bar
   bar() {
     const t = this.t, d = D(); if (!t) return null; const U = v => +fmt(d.toU(v), 3);
-    return { defs: [{ id: 'x', label: `X (${d.unit})`, type: 'number' }, { id: 'y', label: 'Y', type: 'number' }, { id: 'w', label: 'W', type: 'number' }, { id: 'h', label: 'H', type: 'number' }, { id: 'sc', label: 'Scale %', type: 'number' }, { id: 'rot', label: 'Rotate °', type: 'number' },
+    return { defs: [{ id: 'x', label: 'X', type: 'len', tip: 'Centre, horizontal' }, { id: 'y', label: 'Y', type: 'len', tip: 'Centre, vertical' }, { id: 'w', label: 'Width', type: 'len' }, { id: 'h', label: 'Height', type: 'len' }, { id: 'sc', label: 'Scale %', type: 'number' }, { id: 'rot', label: 'Rotate °', type: 'number' },
       { type: 'button', label: 'Apply ⏎', click: () => { this.apply(); app.setTool('select'); } }, { type: 'button', label: 'Cancel', click: () => { this.cancel(); app.setTool('select'); } }],
-      vals: { x: U(t.cx), y: U(t.cy), w: U(t.w * Math.abs(t.sx)), h: U(t.h * Math.abs(t.sy)), sc: +fmt(Math.abs(t.sx) * 100, 2), rot: +fmt(-t.rot * 180 / Math.PI, 2) },
+      vals: { x: t.cx, y: t.cy, w: t.w * Math.abs(t.sx), h: t.h * Math.abs(t.sy), sc: +fmt(Math.abs(t.sx) * 100, 2), rot: +fmt(-t.rot * 180 / Math.PI, 2) },
       set: (id, v) => {
-        if (id === 'x') t.cx = d.fromU(v); else if (id === 'y') t.cy = d.fromU(v); else if (id === 'w' && v > 0) t.sx = Math.sign(t.sx) * d.fromU(v) / t.w; else if (id === 'h' && v > 0) t.sy = Math.sign(t.sy) * d.fromU(v) / t.h;
+        if (id === 'x') t.cx = v; else if (id === 'y') t.cy = v; else if (id === 'w' && v > 0) t.sx = Math.sign(t.sx) * v / t.w; else if (id === 'h' && v > 0) t.sy = Math.sign(t.sy) * v / t.h;
         else if (id === 'sc' && v > 0) { t.sx = Math.sign(t.sx) * v / 100; t.sy = Math.sign(t.sy) * v / 100; } else if (id === 'rot') t.rot = -v * Math.PI / 180;
         this.preview();
       } };
@@ -1008,7 +1008,8 @@ const objsel = {
 };
 
 // toolbar order; '-' is a divider
-export const TOOL_ORDER = ['select', 'node', 'transform', 'crop', '-', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', 'dim', 'measure', '-', 'marquee', 'lasso', 'wand', 'objsel', '-', 'brush', 'eraser', 'stamp', 'remove', 'bucket', 'gradient', '-', 'eyedropper', 'hand', 'zoom'];
+// '#Name' starts a labelled group
+export const TOOL_ORDER = ['#Move', 'select', 'node', 'transform', 'crop', '#Select', 'marquee', 'lasso', 'wand', 'objsel', '#Draw', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', '#Measure', 'dim', 'measure', '#Paint', 'brush', 'eraser', 'stamp', 'remove', 'bucket', 'gradient', '#View', 'eyedropper', 'hand', 'zoom'];
 export function registerTools() {
   for (const t of [select, node, transform, polyTool('line', 'Line / Polyline', 'N', false), polyTool('spline', 'Spline (smooth curve)', 'Y', true), pen, boxTool('rect', 'Rectangle', 'R', 'rect'), boxTool('ellipse', 'Ellipse', 'O', 'ellipse'), text, dimension, measure, marquee, lasso, wand, objsel, crop,
     paintTool('brush', 'Brush', 'B', 'paint'), paintTool('eraser', 'Eraser', 'E', 'erase'), paintTool('stamp', 'Clone Stamp', 'S', 'stamp'), remove, bucket, gradient, eyedropper, hand, zoom]) app.registerTool(t);
