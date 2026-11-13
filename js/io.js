@@ -287,12 +287,12 @@ export async function openFiles(files, place = false) {
     if (!fn) { app.toast(`Cannot open ${file.name}: unsupported format`); continue; }
     try {
       const r = await fn(file); if (!r) continue;
-      if (r.doc) { r.doc.name = base(file.name); app.addDoc(r.doc); continue; }
+      if (r.doc) { r.doc.name = base(file.name); app.addDoc(r.doc); addRecent(r.doc, file, 'file'); continue; }
       if (place && app.doc) {
         const d = app.doc, dx = Math.round((d.w - r.w) / 2), dy = Math.round((d.h - r.h) / 2);
         for (const L of r.layers) { if (L.type === 'raster') { L.x += dx; L.y += dy; } else if (L.shapes) for (const s of L.shapes) transformShape(s, mTranslate(dx, dy)); d.add(L); }
         app.commit('Place ' + file.name);
-      } else app.addDoc(docOf(r, base(file.name)));
+      } else { const nd = docOf(r, base(file.name)); app.addDoc(nd); addRecent(nd, file, 'file'); }
     } catch (e) { console.error(e); app.toast(`Could not open ${file.name}: ${e.message || e}`, 7000); }
   }
 }
@@ -431,10 +431,10 @@ export async function saveDoc(d, saveAs) {
     try {
       if (!d.fileHandle || saveAs) d.fileHandle = await window.showSaveFilePicker({ suggestedName: d.name + '.scifig', types: [{ description: 'SciFig document', accept: { 'application/json': ['.scifig'] } }] });
       const w = await d.fileHandle.createWritable(); await w.write(text); await w.close();
-      d.name = base(d.fileHandle.name); d.dirty = false; app.toast('Saved ' + d.fileHandle.name); app.refresh('docs'); return;
+      d.name = base(d.fileHandle.name); d.dirty = false; app.toast('Saved ' + d.fileHandle.name); app.refresh('docs'); addRecent(d, new Blob([text]), 'doc'); return;
     } catch (e) { if (e.name === 'AbortError') return; console.warn(e); }
   }
-  download(new Blob([text], { type: 'application/json' }), d.name + '.scifig'); d.dirty = false; app.refresh('docs');
+  download(new Blob([text], { type: 'application/json' }), d.name + '.scifig'); d.dirty = false; app.refresh('docs'); addRecent(d, new Blob([text]), 'doc');
 }
 
 // ---------- autosave (IndexedDB) ----------
@@ -446,11 +446,12 @@ export function scheduleAutosave() {
   saveT = setTimeout(async () => {
     try {
       const px = app.docs.reduce((a, d) => a + d.layers.reduce((b, L) => b + (L.canvas ? L.canvas.width * L.canvas.height : 0), 0), 0);
-      if (px > 120e6) return; // too large to mirror into browser storage; rely on File ▸ Save
+      if (px > 120e6 || !app.docs.length) return; // too large to mirror into browser storage (rely on File ▸ Save), or nothing open: keep the last session
       await kv('readwrite', s => s.put({ docs: app.docs.map(d => d.toJSON({ maxHD: 48e6 })), active: app.docs.indexOf(app.doc), time: Date.now() }, 'session'));
     } catch (e) { console.warn('autosave failed', e); }
   }, 2500);
 }
+export async function sessionInfo() { try { const s = await kv('readonly', st => st.get('session')); return s && s.docs && s.docs.length ? { n: s.docs.length, time: s.time, names: s.docs.map(o => o.name) } : null; } catch (e) { return null; } }
 export async function restoreSession() {
   try {
     const s = await kv('readonly', st => st.get('session'));
@@ -460,3 +461,24 @@ export async function restoreSession() {
     return true;
   } catch (e) { console.warn('restore failed', e); return false; }
 }
+
+// ---------- recent files (copies kept in this browser, so they reopen without asking for the file again) ----------
+const RECENT_MAX = 12;
+export async function getRecent() { try { return (await kv('readonly', st => st.get('recent'))) || []; } catch (e) { return []; } }
+async function putRecent(list) { await kv('readwrite', st => st.put(list, 'recent')); app.emit('recent'); }
+export async function addRecent(d, blob, kind) {
+  try {
+    if (!blob || blob.size > 150e6) return;
+    const k = Math.min(1, 160 / Math.max(d.w, d.h)), t = flatten(d, k, { background: '#ffffff' }).toDataURL('image/jpeg', 0.8);
+    const name = kind === 'doc' ? d.name + '.scifig' : blob.name || d.name;
+    const list = (await getRecent()).filter(e => e.name !== name);
+    list.unshift({ id: uid('R'), name, kind, time: Date.now(), thumb: t, w: d.w, h: d.h, data: blob });
+    await putRecent(list.slice(0, RECENT_MAX));
+  } catch (e) { console.warn('recent list not saved', e); }
+}
+export async function openRecent(id) {
+  const e = (await getRecent()).find(q => q.id === id); if (!e) { app.toast('That file is no longer in the recent list'); return; }
+  await openFiles([new File([e.data], e.name)]);
+}
+export async function removeRecent(id) { await putRecent((await getRecent()).filter(q => q.id !== id)); }
+export async function clearRecent() { await putRecent([]); }

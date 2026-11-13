@@ -41,6 +41,17 @@ async function run() {
   ok('custom label', dimShapes(dm)[3].text === 'Ø 13.5 mm' && near(C.rx, 80));
   ed = (app.tools.get('select').dbl({ p: { x: lab.x, y: lab.y - lab.size * 0.3 } }), await waitFor('.dim-edit')); if (ed) typeIn(ed, ''); await sleep(30);
   ok('clearing the label shows the length again', dimShapes(dm)[3].text === (160 / mm).toFixed(2) + ' mm', dimShapes(dm)[3].text);
+  // own values and estimates from a scale reference
+  const E1 = { id: uid(), type: 'dim', a: { x: 100, y: 300 }, b: { x: 300, y: 300 }, off: 20, size: 20, est: true, dec: 1, st: { stroke: '#000', sw: 2 } };
+  const E2 = { id: uid(), type: 'dim', a: { x: 100, y: 300 }, b: { x: 220, y: 460 }, off: 20, size: 20, est: true, dec: 1, st: { stroke: '#000', sw: 2 } };
+  V.shapes.push(E1, E2); V.touch(); app.commit('dims'); app.setTool('select'); d.selShapes = new Set([E1.id]); app.refresh('all'); await sleep(40);
+  app.tools.get('select').dbl({ p: { x: dimShapes(E1)[3].x, y: dimShapes(E1)[3].y - 6 } }); ed = await waitFor('.dim-edit'); typeIn(ed, '20 km'); await sleep(40);
+  ok('own value keeps the length and becomes the scale reference', dimShapes(E1)[3].text === '20 km' && E1.ref === true && near(dist(E1.a, E1.b), 200), `${dimShapes(E1)[3].text} ${E1.ref}`);
+  ok('another dimension is estimated from it', dimShapes(E2)[3].text === '20.0 km', dimShapes(E2)[3].text);
+  E2.text = '35 km'; V.touch(); ok('an overwritten value is shown as written and not used for the scale', dimShapes(E2)[3].text === '35 km' && near(app.lib.docScale ? 1 : 1, 1) && E2.ref !== true);
+  const E3 = { ...E1, id: uid(), text: null, ref: false, b: { x: 400, y: 300 } }; V.shapes.push(E3); V.touch(); ok('estimates use only references', dimShapes(E3)[3].text === '30.0 km', dimShapes(E3)[3].text);
+  E1.ref = false; V.touch(); ok('without a reference the length is shown in document units', dimShapes(E3)[3].text === (300 / mm).toFixed(1) + ' mm', dimShapes(E3)[3].text);
+  V.shapes.splice(V.shapes.indexOf(E1), 1); V.shapes.splice(V.shapes.indexOf(E2), 1); V.shapes.splice(V.shapes.indexOf(E3), 1); V.touch(); app.commit('rm');
   // arrowheads: kinds, size and width
   const A = { id: uid(), type: 'path', closed: false, nodes: [{ x: 100, y: 450 }, { x: 300, y: 450 }], st: { stroke: '#ff0000', sw: 4, fill: null, dash: 'solid', as: 'none', ae: 'arrow', hs: 1, hw: 1, alpha: 1 } };
   V.shapes.push(A); V.touch(); app.commit('arrow');
@@ -95,6 +106,16 @@ async function run() {
   ok('New remembers the last page', app.settings.newDoc.preset === 'A4' && app.settings.newDoc.land === true);
   const p2 = app.run('file.new'); await waitFor('.dialog .presets'); const onB = document.querySelector('.presets button.on'), land = document.querySelector('.orient button.on');
   ok('the dialog opens on the remembered choice', onB && onB.textContent.startsWith('A4') && land && land.textContent.includes('Landscape')); document.querySelector('.dialog .buttons button:not(.primary)').click(); await p2;
+  // nothing opens by itself; recent files and the welcome screen
+  const io = await import('../js/io.js'); await io.clearRecent();
+  const png = await new Promise(r => { const c = document.createElement('canvas'); c.width = 64; c.height = 40; c.getContext('2d').fillRect(0, 0, 20, 20); c.toBlob(r, 'image/png'); });
+  await io.openFiles([new File([png], 'recent-test.png', { type: 'image/png' })]); await sleep(300);
+  const rec = await io.getRecent(); ok('opened files go into the recent list', rec.length === 1 && rec[0].name === 'recent-test.png' && rec[0].thumb.startsWith('data:image/jpeg'), rec.map(e => e.name).join());
+  for (const x of [...app.docs]) app.closeDoc(x); await sleep(300);
+  const card = document.querySelector('#empty .wl-card'), acts = [...document.querySelectorAll('#empty .wl-act')].map(b => b.textContent);
+  ok('welcome screen with actions and recent files', !!card && acts.some(t => t.startsWith('New document')) && acts.some(t => t.startsWith('Open file')), acts.join(' | '));
+  card.click(); await sleep(400); ok('a recent file reopens', app.docs.length === 1 && app.doc.name === 'recent-test' && app.doc.w === 64, app.doc && app.doc.name);
+  for (const x of [...app.docs]) app.closeDoc(x); await io.clearRecent(); app.addDoc(d);
   ok('Print command and Full screen label', app.commands.has('file.print') && document.getElementById('fsBtn').textContent === 'Full screen' && !!document.querySelector('.tab.add'));
   app.setDoc(app.docs[0]); view.fit();
 }

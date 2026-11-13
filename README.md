@@ -85,3 +85,9 @@ Google Fonts for web fonts. Licences of vendored code: LibRaw (LGPL/CDDL), heic-
 - Dimensions are decorative vector shapes again (no attachment, following or constraints); thinner legs (`lw`, default 50%); double-click edits the label.
 - Arrowheads: arrow, swept, hollow, open V, half, bar, dot, hollow circle, square, diamond; Head size % and Head width % (`hs`, `hw`); shared by canvas and SVG (`headParts` in core.js).
 - `js/print.js`: Print dialog with preview, paper sizes, orientation, real size / fit / %, margins, centring, crop marks, whole picture or selection.
+
+## Changed in v6 (2026-11-13)
+
+- No document opens by itself: `js/welcome.js` welcome screen with New, Open, Restore last session, sample and Recent (copies kept in IndexedDB, `addRecent` in io.js); File ▸ Open Recent, File ▸ Restore Last Session.
+- Dimension values: your own label keeps the length; labels with a unit can be scale references (`ref`), and `est` dimensions show lengths converted with their average scale (`docScale`, `dimValue` in core.js).
+- The folded side panel shows "<tool or object> properties".

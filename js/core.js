@@ -95,13 +95,43 @@ let RD = null; // document being rendered (dimension labels show its units)
 let EXPORTING = false; // while exporting, dimensions marked "constraint only" are left out
 export const setExporting = v => { EXPORTING = v; };
 const dimHidden = s => { const d = RD || app.doc; return (d && d.hideDims) || (EXPORTING && s.note === false); };
+// Dimension values. A label typed by hand (s.text) is shown as written. A dimension marked as a scale reference
+// (s.ref) whose label is a number with a unit sets the drawing's scale; dimensions with s.est show their length
+// converted with that scale (the average over all references), so 20 km on one edge gives the diagonal in km.
+const LEN_M = { nm: 1e-9, µm: 1e-6, μm: 1e-6, um: 1e-6, mm: 1e-3, cm: 1e-2, dm: 0.1, m: 1, km: 1e3, in: 0.0254, '"': 0.0254, ft: 0.3048, "'": 0.3048, yd: 0.9144, mi: 1609.344, nmi: 1852, au: 1.495978707e11, ly: 9.4607e15, pc: 3.0857e16 };
+export function parseValue(t) {
+  const m = /^\s*[≈~]?\s*(-?\d+(?:[.,]\d+)?(?:e[-+]?\d+)?)\s*([^\d\s].*?)?\s*$/i.exec(t || ''); if (!m) return null;
+  return { v: parseFloat(m[1].replace(',', '.')), unit: (m[2] || '').trim() };
+}
+const scaleCache = new WeakMap();
+export function docScale(d) {
+  if (!d) return null;
+  const key = d.layers.map(L => L.type === 'vector' ? L.rev : '').join(','), c = scaleCache.get(d); if (c && c.key === key) return c.val;
+  let first = null, sum = 0, n = 0;
+  for (const L of d.layers) if (L.type === 'vector') for (const s of L.shapes) {
+    if (s.type !== 'dim' || !s.ref || !s.text) continue;
+    const p = parseValue(s.text), len = dist(s.a, s.b); if (!p || !(p.v > 0) || !(len > 0)) continue;
+    const k = LEN_M[p.unit] ?? LEN_M[p.unit.toLowerCase()];
+    if (!first) first = { unit: p.unit, k: k ?? null };
+    if (first.k != null && k != null) { sum += p.v * k / len; n++; } else if (first.k == null && p.unit === first.unit) { sum += p.v / len; n++; }
+  }
+  const val = n ? { perPx: sum / n / (first.k ?? 1), unit: first.unit, n } : null; // value in the first reference's unit per document pixel
+  scaleCache.set(d, { key, val });
+  return val;
+}
+export function dimValue(s, d) {
+  if (s.text) return s.text;
+  const L = dist(s.a, s.b), sc = s.est ? docScale(d) : null, dec = s.dec ?? 2;
+  if (sc) return `${(L * sc.perPx).toFixed(dec)}${s.unit === false || !sc.unit ? '' : ' ' + sc.unit}`;
+  return `${(d ? d.toU(L) : L).toFixed(dec)}${s.unit === false || !d ? '' : ' ' + d.unit}`;
+}
 export function dimShapes(s) {
   const d = RD || app.doc, a = s.a, b = s.b, L = dist(a, b) || 1e-9, ux = (b.x - a.x) / L, uy = (b.y - a.y) / L, nx = -uy, ny = ux, off = s.off || 0, sg = off < 0 ? -1 : 1;
   const st = s.st || {}, A = { x: a.x + nx * off, y: a.y + ny * off }, B = { x: b.x + nx * off, y: b.y + ny * off }, g = Math.min(Math.abs(off), s.size * 0.25) * sg, e = s.size * 0.4 * sg;
   const line = { stroke: solidOf(st.stroke), sw: st.sw, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: st.alpha }, leg = { ...line, sw: st.sw * (s.lw ?? 0.5) };
   const ext = (p, P) => ({ type: 'path', closed: false, st: leg, nodes: [{ x: p.x + nx * g, y: p.y + ny * g }, { x: P.x + nx * e, y: P.y + ny * e }] });
   let rot = Math.atan2(uy, ux); if (rot > Math.PI / 2 + 1e-9 || rot <= -Math.PI / 2 + 1e-9) rot += Math.PI;
-  const up = s.size * 0.3 + (st.sw || 0), label = s.text || `${(d ? d.toU(L) : L).toFixed(s.dec ?? 2)}${s.unit === false || !d ? '' : ' ' + d.unit}`;
+  const up = s.size * 0.3 + (st.sw || 0), label = dimValue(s, d);
   return [{ type: 'path', closed: false, nodes: [{ x: A.x, y: A.y }, { x: B.x, y: B.y }], st: { ...line, as: st.as ?? 'arrow', ae: st.ae ?? 'arrow', hs: st.hs, hw: st.hw } }, ext(a, A), ext(b, B),
     { type: 'text', x: (A.x + B.x) / 2 + Math.sin(rot) * up, y: (A.y + B.y) / 2 - Math.cos(rot) * up, text: label, size: s.size, font: s.font || 'Arial', bold: !!s.bold, italic: false, align: 'center', rot, st: { fill: solidOf(st.stroke) || '#000', alpha: st.alpha } }];
 }

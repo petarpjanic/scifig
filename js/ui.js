@@ -8,7 +8,7 @@ import { TOOL_ORDER } from './tools.js';
 import { colorPicker, pickColor } from './color.js';
 import { DEV_PARAMS, developHD, autoRange } from './hd.js';
 import { pickPaint, STYLES, styleOf, styleChip } from './styles.js';
-import { cssPaint, isGrad } from './core.js';
+import { cssPaint, isGrad, docScale, parseValue } from './core.js';
 
 const $ = id => document.getElementById(id);
 export function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
@@ -226,7 +226,7 @@ const IN = false; // the options sidebar stacks its fields
 function objectBar(bar, d) {
   const sel = d.selected(), S = app.settings, shapes = sel.map(o => o.s), s0 = shapes[0], U = v => +fmt(d.toU(v), 3);
   const touchAll = () => { for (const o of sel) o.L.touch(); };
-  bar.append(el('span', 'tool-name', sel.length > 1 ? `${sel.length} objects` : { path: s0.nodes && s0.nodes.some(n => n.a) ? 'Spline' : s0.closed ? 'Closed path' : 'Path', rect: 'Rectangle', ellipse: 'Ellipse', text: 'Text', dim: 'Dimension' }[s0.type]));
+  // the panel header already names the object
   const texts = shapes.filter(s => s.type === 'text'), geo = shapes.filter(s => s.type !== 'text');
   if (geo.length) {
     const st = geo[0].st || {};
@@ -244,10 +244,17 @@ function objectBar(bar, d) {
   const dims = shapes.filter(s => s.type === 'dim');
   if (texts.length || dims.length) {
     const t0 = texts[0] || dims[0], tv = { font: t0.font || 'Arial', size: t0.size, align: t0.align || 'left', bold: !!t0.bold, italic: !!t0.italic, fill: (t0.st && t0.st.fill) || '#000000', dec: t0.dec ?? 2, label: t0.text || '' };
-    const defs = texts.length ? [...textDefs(tv.font), { id: 'fill', label: 'Colour', type: 'color', fallback: '#000000' }] : [...textDefs(tv.font).slice(0, 2), { id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6 }, { id: 'label', label: 'Label', type: 'text', tip: 'Leave empty to show the measured length' }];
+    const defs = texts.length ? [...textDefs(tv.font), { id: 'fill', label: 'Colour', type: 'color', fallback: '#000000' }] : [...textDefs(tv.font).slice(0, 2), { id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6 }];
     if (dims.length === 1 && sel.length === 1) { // a dimension both labels and constrains
       const dm = dims[0];
-      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Length', type: 'len', min: 1e-9, tip: 'Distance between the two ends. Typing a value moves the second end; the shapes are not changed.' },
+      const sc = docScale(d), pv = parseValue(dm.text);
+      bar.append(grp('Value', paramUI([{ id: 'text', label: 'Label', type: 'text', tip: 'Your own value or text, for example 30 m or 2 km. Leave empty for the automatic value.' },
+        { id: 'ref', label: 'Scale reference', type: 'check', tip: 'Use this label (a number with a unit) to estimate the other dimensions' }, { id: 'est', label: 'Estimate from references', type: 'check', tip: 'Without your own label, show the length converted with the scale of the reference dimensions' }],
+        { text: dm.text || '', ref: !!dm.ref, est: !!dm.est }, (id, v) => {
+          if (id === 'text') { dm.text = v.trim() || null; if (!dm.text) dm.ref = false; } else if (id === 'ref') { if (v && !(pv && pv.unit)) { app.toast('Type a value with a unit in the label first, for example 20 km'); app.refresh('props'); return; } dm.ref = v; } else dm.est = v;
+          app.tools.get('dim').opt.est = id === 'est' ? v : app.tools.get('dim').opt.est; app.saveSettings(); touchAll(); app.commit('Dimension value'); app.refresh('props');
+        }, IN), el('div', 'props-note', sc ? `Scale from ${sc.n} reference${sc.n > 1 ? 's' : ''}: 1 ${d.unit} on the page = ${+(d.fromU(1) * sc.perPx).toPrecision(4)} ${sc.unit}` : 'No scale reference yet: type a value with a unit (e.g. 20 km) on one dimension.')));
+      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Length', type: 'len', min: 1e-9, tip: 'Distance between the two ends on the page. Typing a value moves the second end; the shapes are not changed.' },
         { id: 'off', label: 'Offset', type: 'len', tip: 'Distance of the dimension line from the measured points' }, { id: 'lwPct', label: 'Legs %', type: 'number', min: 5, max: 200, step: 5, tip: 'Width of the two perpendicular lines, in % of the dimension line' },
         { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: shown faintly while you work and left out of exported and printed files' }],
         { len: dist(dm.a, dm.b), off: dm.off || 0, lwPct: Math.round((dm.lw ?? 0.5) * 100), note: dm.note !== false }, (id, v) => {
@@ -286,7 +293,10 @@ function buildOptbar() {
   const t = app.tool, bar = $('optbar'), d = app.doc; if (!t) return;
   if (bar.contains(document.activeElement) && document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'range') return; // do not rebuild under a slider being dragged
   const top = bar.scrollTop; bar.innerHTML = '';
-  $('npTitle').textContent = t.title; $('npHead').title = `${t.title}  (${t.keyb})\n${t.hint || ''}\nClick to fold or unfold this panel`;
+  // the header names what the panel is about, also when it is folded
+  const sel = d ? d.selected() : [], TY = { path: 'Path', rect: 'Rectangle', ellipse: 'Ellipse', text: 'Text', dim: 'Dimension' };
+  const what = sel.length > 1 ? `${sel.length} objects` : sel.length ? (sel[0].s.type === 'path' && sel[0].s.nodes.some(n => n.a) ? 'Spline' : TY[sel[0].s.type] || 'Object') : t.title.replace(/ \(.*\)$/, '');
+  $('npTitle').textContent = what + ' properties'; $('npHead').title = `${t.title}  (${t.keyb})\n${t.hint || ''}\nClick to fold or unfold this panel`;
   if (!d) return;
   const tb = t.bar && t.bar();
   if (tb) bar.append(paramUI(tb.defs, tb.vals, (id, v) => tb.set(id, v), IN));

@@ -6,7 +6,8 @@ import { registerImaging, defaultParams } from './imaging.js';
 import { registerTools } from './tools.js';
 import { registerCommands, loadUserPlugins, pasteInternal } from './commands.js';
 import { initUI, dialogOpen } from './ui.js';
-import { openFiles, restoreSession, scheduleAutosave } from './io.js';
+import { openFiles, scheduleAutosave } from './io.js';
+import { initWelcome } from './welcome.js';
 import { registerAnalyze } from './analyze.js';
 import plugins from '../plugins/index.js';
 
@@ -38,7 +39,7 @@ function sample() {
 app.registerCommand({ id: 'help.sample', title: 'Open Sample Figure', run: () => app.addDoc(sample()), desc: 'A small example document to try the tools on' });
 app.menus.find(m => m[0] === 'Help')[1].push('-', 'help.sample');
 
-initUI(); view.init(); app.setTool('select');
+initUI(); initWelcome(); view.init(); app.setTool('select');
 app.on('changed', scheduleAutosave);
 let fitKey = '';
 app.on('docs', () => { const d = app.doc, k = d ? d.id + ':' + d.w + 'x' + d.h : ''; if (d && d.view.fit && k !== fitKey) view.fit(); fitKey = k; });
@@ -92,8 +93,8 @@ window.addEventListener('beforeunload', () => scheduleAutosave());
 // ---------- start ----------
 const q = new URLSearchParams(location.search);
 (async () => {
-  if (q.has('sample')) app.addDoc(sample());
-  else if (!(await restoreSession())) app.refresh('all');
+  // nothing opens by itself: the welcome screen offers New, Open, Recent and Restore last session
+  if (q.has('sample')) app.addDoc(sample()); else app.refresh('all');
   window.scifigReady = window.figuraReady = true;
   if (q.has('test')) import('../tests/selftest.js');
   if (q.has('test2')) import('../tests/selftest2.js');

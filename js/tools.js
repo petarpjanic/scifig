@@ -2,7 +2,7 @@
 import { app } from './app.js';
 import { view } from './view.js';
 import { mk, copyCanvas, uid, dist, fmt, vectorLayer, hitShape, shapeBBox, bboxOf, keyPoints, transformShape, convertToPath, geomSubs, textCorners, textLayout, fontOf,
-  mTranslate, mScaleAbout, mRotateAbout, mMul, mApply, closestOnSeg, cubicPt, renderDoc, flatten, drawShape, dimShapes, smoothShape, unitScale, shapePath, BLENDS } from './core.js';
+  mTranslate, mScaleAbout, mRotateAbout, mMul, mApply, closestOnSeg, cubicPt, renderDoc, flatten, drawShape, dimShapes, smoothShape, unitScale, shapePath, BLENDS, parseValue, docScale } from './core.js';
 import { snapPoint, resolve } from './snap.js';
 import { setSelection, clearSelection, selChanged, applyThroughSelection, coverDoc, floodMask, maskToCanvas, hexToRgb, rgbToHex } from './imaging.js';
 import { cropDoc } from './ops.js';
@@ -879,8 +879,11 @@ export function editDimValue(s, L) {
   let done = false;
   const finish = ok => {
     if (done) return; done = true; const t = inp.value.trim(); inp.remove(); if (!ok) return;
-    const old = s.text || null; s.text = null; const measured = dimShapes(s)[3].text, next = !t || t === measured ? null : t;
-    s.text = next; L.touch(); if (next !== old) app.commit('Dimension label');
+    const old = s.text || null; s.text = null; const auto = dimShapes(s)[3].text, next = !t || t === auto ? null : t;
+    s.text = next;
+    if (!next) s.ref = false;
+    else if (next !== old && parseValue(next) && parseValue(next).unit && !docScale(d)) { s.ref = true; app.toast(`“${next}” is now the scale reference: other dimensions show values estimated from it. Untick “Scale reference” in the side panel to keep it as a plain label.`, 6000); }
+    L.touch(); if (next !== old) app.commit('Dimension label');
   };
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
   inp.addEventListener('blur', () => finish(true));
@@ -906,13 +909,14 @@ function dimTarget(p) {
 }
 const dimension = {
   id: 'dim', title: 'Dimension', keyb: 'K', a: null, b: null, cur: null,
-  hint: 'Click a line, an edge of a rectangle or a circle, or click two points; then click where the dimension should sit. Dimensions are drawings on a vector layer: they show the length when placed and do not change the shapes. Double-click the value to write your own label.',
-  options: [{ id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6, default: 2 }, { id: 'unit', label: 'Show unit', type: 'check', default: true }],
+  hint: 'Click a line, an edge of a rectangle or a circle, or click two points; then click where the dimension should sit. Dimensions are drawings on a vector layer and never change the shapes. Double-click a value to write your own (for example 20 km); the first one becomes the scale reference and other dimensions show values estimated from it.',
+  options: [{ id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6, default: 2 }, { id: 'unit', label: 'Show unit', type: 'check', default: true },
+    { id: 'est', label: 'Estimate from reference dimensions', type: 'check', default: true, tip: 'When some dimension carries your value (for example 20 km) as a scale reference, new dimensions show their length in that unit' }],
   pt(ev) { const r = this.a ? resolve(ev, this.a) : snapPoint(ev.p); view.snapMark = r; return { x: r.x, y: r.y }; },
   shape() {
     const d = D(), a = this.a, b = this.b || this.cur, S = app.settings, DS = S.dimStyle || {}, L = dist(a, b) || 1, st = curStyle();
     const off = this.b ? ((this.cur.x - a.x) * -(b.y - a.y) + (this.cur.y - a.y) * (b.x - a.x)) / L : 0;
-    return { type: 'dim', a: { ...a }, b: { ...b }, off, size: (DS.sizePt ?? S.text.sizePt) * d.ptPx, font: DS.font || S.text.font, dec: this.opt.dec, unit: this.opt.unit, lw: DS.lw ?? 0.5,
+    return { type: 'dim', a: { ...a }, b: { ...b }, off, est: this.opt.est !== false, size: (DS.sizePt ?? S.text.sizePt) * d.ptPx, font: DS.font || S.text.font, dec: this.opt.dec, unit: this.opt.unit, lw: DS.lw ?? 0.5,
       st: { stroke: DS.stroke || (typeof st.stroke === 'string' ? st.stroke : null) || '#000000', sw: (DS.swPt ?? 0.75) * d.ptPx, as: DS.as || 'arrow', ae: DS.ae || 'arrow', hs: DS.hs ?? 1, hw: DS.hw ?? 1, alpha: 1 } };
   },
   down(ev) {
