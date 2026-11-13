@@ -6,6 +6,7 @@ import { setSelection, clearSelection, selChanged, applyThroughSelection, coverD
 import { rgbToLab } from './color.js';
 import { hdFilter, developHD } from './hd.js';
 import { subjectMask } from './ai.js';
+import { printDoc } from './print.js';
 import { cropDoc, scaleDoc, rotateDoc, flipDoc, transformLayer, mergeDown, flattenDoc, rasterizeLayer, duplicateLayer } from './ops.js';
 import { dialog, openPalette, el, popupMenu, toolPopover, paramUI } from './ui.js';
 import { pickFiles, saveDoc, exportDoc, openFiles, convertFiles } from './io.js';
@@ -203,15 +204,7 @@ export function registerCommands() {
     if (clip && v.paste) { const L = nd.add(rasterLayer('Pasted', clip.width, clip.height, Math.round((w - clip.width) / 2), Math.round((h - clip.height) / 2))); L.ctx.drawImage(clip, 0, 0); nd.hist = []; nd.hi = -1; nd.commit('New'); nd.dirty = false; }
     app.addDoc(nd);
   }, { enabled: null, shortcut: 'Alt+N', desc: 'A blank page: A4, A3, Letter, journal columns, slides and screens, portrait or landscape, or the size of the image on the clipboard', keywords: 'create document page clipboard a4 letter landscape portrait paper' });
-  C('file.print', 'Print…', () => {
-    const d = D(), c = flatten(d, 1, { background: '#ffffff' }), wmm = d.w / d.dpi * 25.4, hmm = d.h / d.dpi * 25.4, f = document.createElement('iframe');
-    f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'; document.body.append(f);
-    const doc = f.contentDocument; doc.open();
-    doc.write(`<!doctype html><title>${d.name}</title><style>@page { size: auto; margin: 10mm; } html, body { margin: 0; } img { display: block; margin: 0 auto; width: ${wmm.toFixed(2)}mm; max-width: 100%; height: auto; }</style><img src="${c.toDataURL('image/png')}">`);
-    doc.close();
-    const img = doc.querySelector('img'), go = () => { f.contentWindow.focus(); f.contentWindow.print(); setTimeout(() => f.remove(), 2000); };
-    if (img.complete) setTimeout(go, 50); else img.onload = go;
-  }, { shortcut: 'Mod+P', desc: 'Print the picture at its real size (shrunk only if it does not fit the paper). Choose paper, orientation or "Save as PDF" in the print window.', keywords: 'print paper pdf' });
+  C('file.print', 'Print…', () => printDoc(D()), { shortcut: 'Mod+P', desc: 'Print with a preview: paper size, portrait or landscape, real size, fit to page or a percentage, margins, crop marks, whole picture or the selected area. "Save as PDF" is in the print window.', keywords: 'print paper pdf a4 letter scale' });
   C('file.open', 'Open…', () => pickFiles(false), { enabled: null, shortcut: 'Mod+O', desc: 'Open PNG, JPEG, TIFF, PSD, SVG, PDF, AI, EPS or SciFig files', keywords: 'import load psd eps svg tiff pdf' });
   C('file.place', 'Place as Layers…', () => pickFiles(true), { desc: 'Import a file into the current document as new layers', keywords: 'import embed insert image' });
   C('file.save', 'Save', () => saveDoc(D(), false), { shortcut: 'Mod+S', desc: 'Save the layered document (.scifig)' });
@@ -492,8 +485,8 @@ The bar under the menu also has X, Y, W, H, rotation, and for a single line its 
 Right-click in the picture for a menu that fits the tool, the object under the cursor and the selection. With a brush, eraser or stamp it opens the size and hardness sliders.
 Hover over any button to see its name and keyboard shortcut.`, 'context menu properties toolbar tooltip');
   H('Guide: arrows, dashes, dots, dimensions and splines', `Style templates in the side panel give one-click looks (outline, card, metal, glass, gradients, glow, highlight). Fill and Stroke open a picker with Colour, Gradient (presets, linear or radial, angle, editable stops) and None, and Drop shadow adds a soft shadow. Line style is in the side panel: solid, dashed, dotted (round dots) or dash-dot, with Dash and Gap lengths in line widths, so a smaller Gap gives a denser line. Start and End add arrowheads or markers: arrow, open arrow, bar, dot, circle, square, diamond; Head % sets their size.
-Dimension tool (K) works like a Fusion 360 sketch dimension. Click a line, an edge of a rectangle or a circle (or click two points), then click where the dimension should sit and type the value: the shape changes to match. Dimensions are driving by default, so the shape keeps that length when you drag it; untick "Driving" in the side panel for a reference dimension that only shows the length and follows the shape. Double-click a value (or click the value of a selected dimension) to change it later; a unit can be typed (25mm, 1in). Locked values are bold.
-"Show in export" off makes a dimension a working constraint only; View ▸ Show Dimensions hides them all. Text size, font, arrows and decimals are in the side panel and are remembered for the next dimensions.
+Dimension tool (K): click a line, an edge of a rectangle or a circle (for its diameter), or click two points, then click where the dimension line should sit. A dimension is a drawing on a vector layer: it shows the length when it is placed and never changes your shapes. Double-click the value to write your own label (clear it to show the length again). In the side panel you can set the length, offset, the width of the two legs, text size, font, arrows and decimals; these are remembered for the next dimensions. "Show in export" off keeps a dimension out of exports and prints; View ▸ Show Dimensions hides them all.
+Arrowheads: arrow, swept arrow, hollow arrow, open V, half arrow, bar, dot, hollow circle, square and diamond. "Head size %" sets their length and "Head width %" their spread (above 100 = wide and shallow, below = narrow and pointed).
 Spline tool (Y): click points and a smooth curve passes through them. In Edit Nodes (A) the round nodes are spline points; drag them and the curve follows. Drag a handle, or right-click a node, to turn it into an ordinary smooth or corner point. Smooth sets how round the spline is. The Pen (P) draws bezier curves with handles directly.`, 'arrow dash dot dimension spline bezier marker');
   H('Guide: layer masks', `A mask hides parts of a layer without erasing them. It works on image, vector and adjustment layers.
 Add one with ◐ in the Layers panel (with a selection active, only the selection stays visible). A second thumbnail appears: click it and paint with black to hide, white to show (X swaps the colours); gradients and the bucket work too. Click the first thumbnail to paint on the picture again.

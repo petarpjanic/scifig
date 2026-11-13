@@ -1,4 +1,4 @@
-// Checks for the third round: Fusion-style dimensions, gradients and templates, presets, persistence, snapping. Run with ?test3.
+// Checks for the third round: decorative dimensions, arrowheads, gradients and templates, presets, persistence, snapping. Run with ?test3.
 import { app } from '../js/app.js';
 import { view } from '../js/view.js';
 import { newDoc, vectorLayer, rasterLayer, flatten, dimShapes, uid, dist } from '../js/core.js';
@@ -19,36 +19,42 @@ const typeIn = (inp, v) => { inp.value = v; inp.dispatchEvent(new KeyboardEvent(
 const waitFor = async q => { for (let i = 0; i < 60; i++) { const e = document.querySelector(q); if (e) return e; await sleep(30); } return null; };
 
 async function run() {
-  app.settings.snap.align = false; delete app.settings.dimStyle; app.tools.get('dim').opt.driving = true;
+  app.settings.snap.align = false; delete app.settings.dimStyle; 
   const d = newDoc({ name: 'T3', w: 800, h: 500, dpi: 300, unit: 'mm' }); app.addDoc(d); view.fit(); await sleep(120);
   const mm = d.pxPerUnit, V = d.add(vectorLayer('V'));
   const R = { id: uid(), type: 'rect', x: 100, y: 100, w: 200, h: 120, r: 0, rot: 0, st: { stroke: '#000000', sw: 4, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: 1 } };
   const C = { id: uid(), type: 'ellipse', cx: 600, cy: 250, rx: 80, ry: 80, rot: 0, st: { stroke: '#000000', sw: 4, fill: null, alpha: 1 } };
   V.shapes.push(R, C); V.touch(); app.commit('shapes');
 
-  // ---- Fusion-style dimensions ----
+  // ---- decorative dimensions ----
   app.setTool('dim'); click(200, 100); click(200, 70); // click the top edge, then place
-  let dm = V.shapes[V.shapes.length - 1], ed = await waitFor('.dim-edit');
-  ok('clicking an edge dimensions it (driving, value box opens)', dm.type === 'dim' && dm.ra && dm.rb && dm.lock != null && near(dist(dm.a, dm.b), 200) && !!ed, `${dm.type} ${dm.lock}`);
-  typeIn(ed, '30'); await sleep(30);
-  ok('typing the value resizes the rectangle', near(R.w, 30 * mm) && near(R.h, 120) && near(R.x, 100), `${R.w / mm}`);
+  let dm = V.shapes[V.shapes.length - 1];
+  ok('clicking an edge dimensions it', dm.type === 'dim' && near(dist(dm.a, dm.b), 200) && !dm.ra && dm.lock == null && !document.querySelector('.dim-edit'), `${dm.type}`);
   app.setTool('select'); d.selShapes = new Set([R.id]); app.refresh('all'); await sleep(40);
-  const h = app.tools.get('select').handles(), hr = h.pts.find(q => q.u === 1 && q.v === 0.5); drag(hr.x, hr.y, hr.x + 120, hr.y + 40);
-  ok('dragging a handle cannot change a driving dimension', near(R.w, 30 * mm, 1e-6), `${R.w / mm}`);
-  const hb = app.tools.get('select').handles().pts.find(q => q.u === 0.5 && q.v === 1); drag(hb.x, hb.y, hb.x, hb.y + 60);
-  ok('the free direction still changes', near(R.h, 180, 0.5) && near(R.w, 30 * mm, 1e-6), `${R.h}`);
-  dm.lock = undefined; delete dm.lock; app.commit('ref'); drag(R.x + R.w, R.y + R.h / 2, R.x + R.w + 50, R.y + R.h / 2);
-  ok('a reference dimension follows the shape', near(dist(dm.a, dm.b), R.w, 1e-6) && R.w > 30 * mm + 40, `${R.w} ${dist(dm.a, dm.b)}`);
-  app.setTool('dim'); click(600 + 56.57, 250 - 56.57); click(600, 140); dm = V.shapes[V.shapes.length - 1]; ed = await waitFor('.dim-edit'); typeIn(ed, '20mm'); await sleep(30);
-  ok('clicking a circle dimensions its diameter', dm.type === 'dim' && near(C.rx, 10 * mm, 1e-6) && near(dist(dm.a, dm.b), 20 * mm, 1e-6), `${C.rx / mm}`);
+  const hr = app.tools.get('select').handles().pts.find(q => q.u === 1 && q.v === 0.5); drag(hr.x, hr.y, hr.x + 120, hr.y);
+  ok('the shape changes freely and the dimension stays', near(R.w, 320, 0.5) && near(dist(dm.a, dm.b), 200), `${R.w} ${dist(dm.a, dm.b)}`);
+  app.setTool('dim'); click(600 + 56.57, 250 - 56.57); click(600, 140); dm = V.shapes[V.shapes.length - 1];
+  ok('clicking a circle dimensions its diameter', dm.type === 'dim' && near(dist(dm.a, dm.b), 160, 1e-6) && near(C.rx, 80), `${dist(dm.a, dm.b)}`);
   app.setTool('select'); d.selShapes = new Set([dm.id]); app.refresh('all'); await sleep(40);
-  const lab = dimShapes(dm)[3]; click(lab.x, lab.y - lab.size * 0.3); ed = await waitFor('.dim-edit');
-  ok('clicking the value of a selected dimension edits it', !!ed); if (ed) typeIn(ed, '1in'); await sleep(30);
-  ok('the value accepts other units', near(C.rx * 2, 300, 0.01), C.rx * 2);
+  const lab = dimShapes(dm)[3]; click(lab.x, lab.y - lab.size * 0.3); let ed = await waitFor('.dim-edit');
+  ok('clicking the value of a selected dimension edits its label', !!ed); if (ed) typeIn(ed, 'Ø 13.5 mm'); await sleep(30);
+  ok('custom label', dimShapes(dm)[3].text === 'Ø 13.5 mm' && near(C.rx, 80));
+  ed = (app.tools.get('select').dbl({ p: { x: lab.x, y: lab.y - lab.size * 0.3 } }), await waitFor('.dim-edit')); if (ed) typeIn(ed, ''); await sleep(30);
+  ok('clearing the label shows the length again', dimShapes(dm)[3].text === (160 / mm).toFixed(2) + ' mm', dimShapes(dm)[3].text);
+  // arrowheads: kinds, size and width
+  const A = { id: uid(), type: 'path', closed: false, nodes: [{ x: 100, y: 450 }, { x: 300, y: 450 }], st: { stroke: '#ff0000', sw: 4, fill: null, dash: 'solid', as: 'none', ae: 'arrow', hs: 1, hw: 1, alpha: 1 } };
+  V.shapes.push(A); V.touch(); app.commit('arrow');
+  const spread = () => { const f = flatten(d); let top = 450; while (top > 400 && (q => q[0] > 200 && q[1] < 90)(px(f, 290, top - 1))) top--; return 450 - top; };
+  const w1 = spread(); A.st.hw = 2; V.touch(); const w2 = spread(); A.st.hs = 2; V.touch(); const w3 = spread();
+  ok('Head width makes arrows wider and Head size bigger', w2 > w1 * 1.6 && w3 >= w2, `${w1} ${w2} ${w3}`);
+  let all = true; for (const k of ['stealth', 'triangle', 'open', 'half', 'bar', 'dot', 'circle', 'square', 'diamond']) { A.st.ae = k; V.touch(); { const q = px(flatten(d), 297, 450); if (!(q[0] > 200 && q[1] < 90) && !['triangle', 'circle', 'open', 'bar'].includes(k)) all = false; } }
+  ok('every arrowhead kind draws', all);
+  const svgA = toSVG(d); ok('arrowheads export to SVG', /<circle[^>]*fill="#ffffff"[^>]*stroke="#ff0000"/.test(svgA) || /fill="#ff0000"/.test(svgA));
+  A.st.ae = 'arrow'; A.st.hs = 1; A.st.hw = 1; V.touch();
   // persistence: change the label size of this dimension, the next one uses it
   const sizeIn = [...document.querySelectorAll('#optbar .row')].find(r => r.textContent.startsWith('Size'));
   sizeIn.querySelector('input').value = '14'; sizeIn.querySelector('input').dispatchEvent(new Event('change')); await sleep(40);
-  app.setTool('dim'); click(R.x, R.y + 30); click(R.x - 30, R.y + 30); const d2 = V.shapes[V.shapes.length - 1]; const e2 = await waitFor('.dim-edit'); if (e2) typeIn(e2, ''); await sleep(20);
+  app.setTool('dim'); click(R.x, R.y + 30); click(R.x - 30, R.y + 30); const d2 = V.shapes[V.shapes.length - 1]; await sleep(20);
   ok('dimension text size is remembered for the next one', near(d2.size, 14 * d.ptPx, 1e-6) && app.settings.dimStyle.sizePt === 14, `${d2.size / d.ptPx}`);
 
   // ---- gradients, shadow, templates ----

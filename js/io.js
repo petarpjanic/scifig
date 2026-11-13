@@ -1,6 +1,6 @@
 // File input/output: images, HEIC, camera raw, 8/16/32-bit TIFF and PNG, PSD, SVG (editable vectors), PDF/AI, EPS, native .scifig; exports; autosave.
 import { app } from './app.js';
-import { Doc, Layer, mk, uid, rasterLayer, vectorLayer, flatten, transformShape, mMul, mTranslate, geomSubs, endDir, arrowLen, textLayout, textRuns, dashArr, dimShapes, BLENDS, fmt, setExporting, isGrad, solidOf, gradGeom, stopColor, shapeBBox } from './core.js';
+import { Doc, Layer, mk, uid, rasterLayer, vectorLayer, flatten, transformShape, mMul, mTranslate, geomSubs, endDir, arrowLen, textLayout, textRuns, dashArr, dimShapes, BLENDS, fmt, setExporting, isGrad, solidOf, gradGeom, stopColor, shapeBBox, headParts, headBack } from './core.js';
 import { hdFromInts, developHD, autoRange, hdComposite, toU16, png16, tiffHi } from './hd.js';
 import { rasterOf } from './ops.js';
 import { dialog } from './ui.js';
@@ -356,20 +356,17 @@ function shapeSVG(s) {
   let subs = geomSubs(s), extra = '';
   const open = s.type === 'path' && !s.closed && s.nodes.length > 1 && st.stroke;
   if (open && ((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none'))) {
-    const nodes = s.nodes.map(q => ({ ...q })), L = arrowLen(st.sw, st.hs), col = esc(solidOf(st.stroke));
+    const nodes = s.nodes.map(q => ({ ...q })), col = esc(solidOf(st.stroke));
     const head = (kind, tip, d) => { if (!d || !kind || kind === 'none') return;
-      const nx = -d.y, ny = d.x, P = (a, b) => `${n2(tip.x - d.x * L * a + nx * L * b)} ${n2(tip.y - d.y * L * a + ny * L * b)}`;
-      if (kind === 'arrow') extra += `<path d="M${P(0, 0)}L${P(1, 0.36)}L${P(1, -0.36)}Z" fill="${col}"/>`;
-      else if (kind === 'open') extra += `<path d="M${P(1, 0.4)}L${P(0, 0)}L${P(1, -0.4)}" fill="none" stroke="${col}" stroke-width="${n2(st.sw)}"/>`;
-      else if (kind === 'bar') extra += `<path d="M${P(0, 0.5)}L${P(0, -0.5)}" fill="none" stroke="${col}" stroke-width="${n2(st.sw)}"/>`;
-      else if (kind === 'dot') extra += `<circle cx="${n2(tip.x)}" cy="${n2(tip.y)}" r="${n2(L * 0.3)}" fill="${col}"/>`;
-      else if (kind === 'circle') extra += `<circle cx="${n2(tip.x)}" cy="${n2(tip.y)}" r="${n2(L * 0.32)}" fill="#fff" stroke="${col}" stroke-width="${n2(st.sw)}"/>`;
-      else if (kind === 'square') { const r = L * 0.28, Q = (a, b) => `${n2(tip.x + (d.x * a + nx * b) * r)} ${n2(tip.y + (d.y * a + ny * b) * r)}`; extra += `<path d="M${Q(1, 1)}L${Q(1, -1)}L${Q(-1, -1)}L${Q(-1, 1)}Z" fill="${col}"/>`; }
-      else if (kind === 'diamond') { const r = L * 0.4, Q = (a, b) => `${n2(tip.x + (d.x * a + nx * b) * r)} ${n2(tip.y + (d.y * a + ny * b) * r)}`; extra += `<path d="M${Q(1, 0)}L${Q(0, 0.7)}L${Q(-1, 0)}L${Q(0, -0.7)}Z" fill="${col}"/>`; } };
+      for (const q of headParts(kind, tip, d, st)) {
+        const paint = `fill="${q.fill ? (q.fill === 'paper' ? '#ffffff' : col) : 'none'}"${q.stroke ? ` stroke="${col}" stroke-width="${n2(st.sw)}"` : ''}`;
+        extra += q.circle ? `<circle cx="${n2(q.circle[0])}" cy="${n2(q.circle[1])}" r="${n2(q.circle[2])}" ${paint}/>` : `<path d="M${q.poly.map(p => n2(p[0]) + ' ' + n2(p[1])).join('L')}${q.open ? '' : 'Z'}" ${paint}/>`;
+      } };
     const d0 = endDir(s.nodes, false), d1 = endDir(s.nodes, true), e = s.nodes.length - 1;
     head(st.as, s.nodes[0], d0); head(st.ae, s.nodes[e], d1);
-    if (st.as === 'arrow' && d0) { nodes[0].x -= d0.x * L * 0.8; nodes[0].y -= d0.y * L * 0.8; }
-    if (st.ae === 'arrow' && d1) { nodes[e].x -= d1.x * L * 0.8; nodes[e].y -= d1.y * L * 0.8; }
+    const b0 = headBack(st.as, st), b1 = headBack(st.ae, st);
+    if (b0 && d0) { nodes[0].x -= d0.x * b0; nodes[0].y -= d0.y * b0; }
+    if (b1 && d1) { nodes[e].x -= d1.x * b1; nodes[e].y -= d1.y * b1; }
     subs = [{ nodes, closed: false }, ...(s.subs || [])];
   }
   const p = `<path d="${pathD(subs)}" ${paintAttr}/>`;

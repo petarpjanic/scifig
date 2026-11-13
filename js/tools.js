@@ -9,7 +9,7 @@ import { cropDoc } from './ops.js';
 import { hdAffine } from './hd.js';
 import { inpaint } from './inpaint.js';
 import { objectMask, neuralFill } from './ai.js';
-import { findAnchor, syncDims, driveDim, anchors } from './dims.js';
+import { findAnchor, anchors } from './dims.js';
 
 const D = () => app.doc;
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -230,7 +230,7 @@ const select = {
     } else if (m.mode === 'dim') {
       const s = m.o.s;
       if (m.k === 'off') { const L = dist(s.a, s.b) || 1; s.off = ((ev.p.x - s.a.x) * -(s.b.y - s.a.y) + (ev.p.y - s.a.y) * (s.b.x - s.a.x)) / L; }
-      else { const r = snapPoint(ev.p, { exclude: d.selShapes }); view.snapMark = r; s[m.k] = { x: r.x, y: r.y }; const ref = findAnchor(d, r, 2 / d.view.zoom); if (ref) s['r' + m.k] = ref; else delete s['r' + m.k]; if (s.lock != null) s.lock = dist(s.a, s.b); }
+      else { const r = snapPoint(ev.p, { exclude: d.selShapes }); view.snapMark = r; s[m.k] = { x: r.x, y: r.y }; }
       m.moved = true;
     } else if (m.mode === 'pixels') {
       let dx = Math.round(ev.p.x - m.start.x), dy = Math.round(ev.p.y - m.start.y);
@@ -242,7 +242,6 @@ const select = {
       if (ev.shift) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
       m.L.x = m.ox + dx; m.L.y = m.oy + dy; m.moved = dx || dy;
     } else if (m.mode === 'marquee') m.cur = ev.p;
-    if (m.mode !== 'marquee' && m.mode !== 'layer' && m.mode !== 'pixels') syncDims(d, m.mode !== 'dim'); // dimensions follow, and driving ones hold their length, while dragging
     app.refresh('render');
   },
   up(ev) {
@@ -366,7 +365,7 @@ const node = {
       if (ev.shift) { dx = ev.p.x - m.grab.x; dy = ev.p.y - m.grab.y; if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; view.snapMark = null; }
       const os = subsOf(m.orig);
       for (const sn of d.selNodes) { const n = subs[sn.sub].nodes[sn.i], q = os[sn.sub].nodes[sn.i]; for (const k of ['x', 'ix', 'ox']) if (q[k] != null) n[k] = q[k] + dx; for (const k of ['y', 'iy', 'oy']) if (q[k] != null) n[k] = q[k] + dy; }
-      smoothShape(m.o.s); m.o.L.touch(); syncDims(d, true);
+      smoothShape(m.o.s); m.o.L.touch();
       m.moved = true;
     } else {
       const n = subs[m.sub].nodes[m.i], w = m.w, v = w === 'i' ? 'o' : 'i';
@@ -871,20 +870,17 @@ const crop = {
 };
 
 // ---------- dimension ----------
-// Edit a dimension's value right on the drawing (as in Fusion 360): Enter drives the attached shape.
+// Edit a dimension's label right on the drawing. An empty label shows the measured length again.
 export function editDimValue(s, L) {
   const d = D(), lab = dimShapes(s)[3], p = view.S({ x: lab.x, y: lab.y - lab.size * 0.35 }), inp = document.createElement('input');
   document.querySelectorAll('.dim-edit').forEach(e => e.remove());
-  inp.className = 'dim-edit'; inp.value = fmt(d.toU(dist(s.a, s.b)), s.dec ?? 3); inp.spellcheck = false; inp.title = 'New value, Enter to apply (a unit can be typed: 25mm, 1in, 300px), Esc to cancel';
+  inp.className = 'dim-edit'; inp.value = s.text || lab.text; inp.spellcheck = false; inp.title = 'Label text, Enter to apply, Esc to cancel. Clear it to show the measured length.';
   inp.style.left = p.x - 55 + 'px'; inp.style.top = p.y - 14 + 'px'; view.vp.appendChild(inp);
   let done = false;
   const finish = ok => {
     if (done) return; done = true; const t = inp.value.trim(); inp.remove(); if (!ok) return;
-    const m = /^(-?\d*\.?\d+)\s*(px|mm|cm|in|pt)?$/i.exec(t); if (!m) { if (t) app.toast('Type a number, for example 25 or 25mm'); return; }
-    const px = m[2] ? parseFloat(m[1]) * unitScale(m[2].toLowerCase(), d.dpi) : d.fromU(parseFloat(m[1]));
-    if (!(px > 0) || Math.abs(px - dist(s.a, s.b)) < 1e-9) return;
-    driveDim(d, s, px); L.touch(); app.commit('Dimension value');
-    if (!s.ra && !s.rb) app.toast('This dimension is not attached to a shape, so only the dimension changed');
+    const old = s.text || null; s.text = null; const measured = dimShapes(s)[3].text, next = !t || t === measured ? null : t;
+    s.text = next; L.touch(); if (next !== old) app.commit('Dimension label');
   };
   inp.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
   inp.addEventListener('blur', () => finish(true));
@@ -910,33 +906,29 @@ function dimTarget(p) {
 }
 const dimension = {
   id: 'dim', title: 'Dimension', keyb: 'K', a: null, b: null, cur: null,
-  hint: 'Click a line, an edge of a rectangle or a circle to dimension it, or click two points. Then click where the dimension should sit and type the value: the shape follows it. Driving dimensions hold their shape like Fusion 360 sketch dimensions; double-click a value later to change it.',
-  options: [{ id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6, default: 2 }, { id: 'unit', label: 'Show unit', type: 'check', default: true }, { id: 'driving', label: 'Driving (constrains)', type: 'check', default: true }],
-  pt(ev) { const r = this.a ? resolve(ev, this.a) : snapPoint(ev.p); view.snapMark = r; this.ref = findAnchor(D(), r, 2 / D().view.zoom); return { x: r.x, y: r.y }; },
+  hint: 'Click a line, an edge of a rectangle or a circle, or click two points; then click where the dimension should sit. Dimensions are drawings on a vector layer: they show the length when placed and do not change the shapes. Double-click the value to write your own label.',
+  options: [{ id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6, default: 2 }, { id: 'unit', label: 'Show unit', type: 'check', default: true }],
+  pt(ev) { const r = this.a ? resolve(ev, this.a) : snapPoint(ev.p); view.snapMark = r; return { x: r.x, y: r.y }; },
   shape() {
     const d = D(), a = this.a, b = this.b || this.cur, S = app.settings, DS = S.dimStyle || {}, L = dist(a, b) || 1, st = curStyle();
     const off = this.b ? ((this.cur.x - a.x) * -(b.y - a.y) + (this.cur.y - a.y) * (b.x - a.x)) / L : 0;
-    return { type: 'dim', a: { ...a }, b: { ...b }, off, ...(this.ra ? { ra: this.ra } : {}), ...(this.rb ? { rb: this.rb } : {}), size: (DS.sizePt ?? S.text.sizePt) * d.ptPx, font: DS.font || S.text.font, dec: this.opt.dec, unit: this.opt.unit,
-      st: { stroke: DS.stroke || (typeof st.stroke === 'string' ? st.stroke : null) || '#000000', sw: (DS.swPt ?? 0.75) * d.ptPx, as: DS.as || 'arrow', ae: DS.ae || 'arrow', hs: DS.hs ?? 1, alpha: 1 } };
+    return { type: 'dim', a: { ...a }, b: { ...b }, off, size: (DS.sizePt ?? S.text.sizePt) * d.ptPx, font: DS.font || S.text.font, dec: this.opt.dec, unit: this.opt.unit, lw: DS.lw ?? 0.5,
+      st: { stroke: DS.stroke || (typeof st.stroke === 'string' ? st.stroke : null) || '#000000', sw: (DS.swPt ?? 0.75) * d.ptPx, as: DS.as || 'arrow', ae: DS.ae || 'arrow', hs: DS.hs ?? 1, hw: DS.hw ?? 1, alpha: 1 } };
   },
   down(ev) {
     const d = D(); d.hideDims = false;
     if (!this.a) {
       const e = dimTarget(ev.p);
-      if (e) { this.a = { x: e[0].x, y: e[0].y }; this.b = { x: e[1].x, y: e[1].y }; this.ra = { id: e[2], k: e[0].k }; this.rb = { id: e[2], k: e[1].k }; this.cur = ev.p; view.snapMark = null; return; }
-      this.a = this.pt(ev); this.ra = this.ref; this.cur = this.a;
+      if (e) { this.a = { x: e[0].x, y: e[0].y }; this.b = { x: e[1].x, y: e[1].y }; this.cur = ev.p; view.snapMark = null; return; }
+      this.a = this.pt(ev); this.cur = this.a;
     }
-    else if (!this.b) { const p = this.pt(ev); if (dist(p, this.a) > 1e-6) { this.b = p; this.rb = this.ref; this.cur = ev.p; view.snapMark = null; } }
-    else {
-      this.cur = ev.p; const s = this.shape(); this.cancel();
-      if ((s.ra || s.rb) && this.opt.driving) s.lock = dist(s.a, s.b);
-      addShape(s, 'Dimension'); const o = d.findShape(s.id); if (o) editDimValue(o.s, o.L); // type the value straight away
-    }
+    else if (!this.b) { const p = this.pt(ev); if (dist(p, this.a) > 1e-6) { this.b = p; this.cur = ev.p; view.snapMark = null; } }
+    else { this.cur = ev.p; const s = this.shape(); this.cancel(); addShape(s, 'Dimension'); }
   },
   move(ev) { if (this.b) this.cur = ev.p; else if (this.a) this.cur = this.pt(ev); else { view.snapMark = snapPoint(ev.p); this.hover = dimTarget(ev.p); } },
   key(e) { if (e.key === 'Escape' && this.a) { this.cancel(); return true; } return false; },
   context() { if (!this.a) return false; this.cancel(); return true; },
-  cancel() { this.a = this.b = this.cur = this.ra = this.rb = this.hover = null; view.snapMark = null; app.refresh('overlay'); },
+  cancel() { this.a = this.b = this.cur = this.hover = null; view.snapMark = null; app.refresh('overlay'); },
   deactivate() { this.cancel(); },
   draw(ctx) {
     if (!this.a && this.hover) { const A = view.S(this.hover[0]), B = view.S(this.hover[1]); ctx.strokeStyle = '#19c37d'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); return; }

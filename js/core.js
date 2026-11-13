@@ -51,7 +51,7 @@ export const fmt = (v, d = 2) => String(+(+v).toFixed(d));
 // shadow: {c, a, blur, x, y} in document px
 const hctx = mk(1, 1).getContext('2d');
 export const DASHES = { solid: [], dashed: [4, 3], dotted: [0.1, 2.2], dashdot: [5, 2.5, 0.1, 2.5] };
-export const HEADS = ['none', 'arrow', 'open', 'bar', 'dot', 'circle', 'square', 'diamond'];
+export const HEADS = [['none', 'none'], ['arrow', 'arrow'], ['stealth', 'arrow (swept)'], ['triangle', 'arrow (hollow)'], ['open', 'arrow (open V)'], ['half', 'half arrow'], ['bar', 'bar'], ['dot', 'dot'], ['circle', 'circle (hollow)'], ['square', 'square'], ['diamond', 'diamond']];
 // Dash pattern in stroke widths. st.dl / st.dg override the dash and gap length of the preset.
 export function dashArr(st) {
   const p = DASHES[st.dash] || []; if (!p.length) return p;
@@ -98,12 +98,12 @@ const dimHidden = s => { const d = RD || app.doc; return (d && d.hideDims) || (E
 export function dimShapes(s) {
   const d = RD || app.doc, a = s.a, b = s.b, L = dist(a, b) || 1e-9, ux = (b.x - a.x) / L, uy = (b.y - a.y) / L, nx = -uy, ny = ux, off = s.off || 0, sg = off < 0 ? -1 : 1;
   const st = s.st || {}, A = { x: a.x + nx * off, y: a.y + ny * off }, B = { x: b.x + nx * off, y: b.y + ny * off }, g = Math.min(Math.abs(off), s.size * 0.25) * sg, e = s.size * 0.4 * sg;
-  const line = { stroke: solidOf(st.stroke), sw: st.sw, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: st.alpha };
-  const ext = (p, P) => ({ type: 'path', closed: false, st: line, nodes: [{ x: p.x + nx * g, y: p.y + ny * g }, { x: P.x + nx * e, y: P.y + ny * e }] });
+  const line = { stroke: solidOf(st.stroke), sw: st.sw, fill: null, dash: 'solid', as: 'none', ae: 'none', alpha: st.alpha }, leg = { ...line, sw: st.sw * (s.lw ?? 0.5) };
+  const ext = (p, P) => ({ type: 'path', closed: false, st: leg, nodes: [{ x: p.x + nx * g, y: p.y + ny * g }, { x: P.x + nx * e, y: P.y + ny * e }] });
   let rot = Math.atan2(uy, ux); if (rot > Math.PI / 2 + 1e-9 || rot <= -Math.PI / 2 + 1e-9) rot += Math.PI;
   const up = s.size * 0.3 + (st.sw || 0), label = s.text || `${(d ? d.toU(L) : L).toFixed(s.dec ?? 2)}${s.unit === false || !d ? '' : ' ' + d.unit}`;
-  return [{ type: 'path', closed: false, nodes: [{ x: A.x, y: A.y }, { x: B.x, y: B.y }], st: { ...line, as: st.as ?? 'arrow', ae: st.ae ?? 'arrow', hs: st.hs } }, ext(a, A), ext(b, B),
-    { type: 'text', x: (A.x + B.x) / 2 + Math.sin(rot) * up, y: (A.y + B.y) / 2 - Math.cos(rot) * up, text: label, size: s.size, font: s.font || 'Arial', bold: s.lock != null, italic: false, align: 'center', rot, st: { fill: solidOf(st.stroke) || '#000', alpha: st.alpha } }];
+  return [{ type: 'path', closed: false, nodes: [{ x: A.x, y: A.y }, { x: B.x, y: B.y }], st: { ...line, as: st.as ?? 'arrow', ae: st.ae ?? 'arrow', hs: st.hs, hw: st.hw } }, ext(a, A), ext(b, B),
+    { type: 'text', x: (A.x + B.x) / 2 + Math.sin(rot) * up, y: (A.y + B.y) / 2 - Math.cos(rot) * up, text: label, size: s.size, font: s.font || 'Arial', bold: !!s.bold, italic: false, align: 'center', rot, st: { fill: solidOf(st.stroke) || '#000', alpha: st.alpha } }];
 }
 // Spline nodes (flag a) get their handles from their neighbours; t is the smoothness (1 = natural).
 export function autoSmooth(sp, t = 1) {
@@ -317,18 +317,40 @@ export function endDir(nodes, atEnd) {
   const d = dist(p, q); if (d < 1e-9) return null;
   return { x: (p.x - q.x) / d, y: (p.y - q.y) / d };
 }
+// Arrowheads and end markers. Length = (4 × line width + 3) × hs, half width = 0.36 × length × hw:
+// hw > 1 gives a wide, flat ("shallow") head, hw < 1 a narrow, pointed one.
 export const arrowLen = (sw, hs = 1) => (sw * 4 + 3) * (hs || 1);
-function drawHead(ctx, kind, tip, d, sw, color, hs) {
-  const L = arrowLen(sw, hs), nx = -d.y, ny = d.x;
-  ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = sw; ctx.setLineDash([]); ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
-  ctx.beginPath();
-  if (kind === 'arrow') { ctx.moveTo(tip.x, tip.y); ctx.lineTo(tip.x - d.x * L + nx * L * 0.36, tip.y - d.y * L + ny * L * 0.36); ctx.lineTo(tip.x - d.x * L - nx * L * 0.36, tip.y - d.y * L - ny * L * 0.36); ctx.closePath(); ctx.fill(); }
-  else if (kind === 'open') { ctx.moveTo(tip.x - d.x * L + nx * L * 0.4, tip.y - d.y * L + ny * L * 0.4); ctx.lineTo(tip.x, tip.y); ctx.lineTo(tip.x - d.x * L - nx * L * 0.4, tip.y - d.y * L - ny * L * 0.4); ctx.stroke(); }
-  else if (kind === 'bar') { ctx.moveTo(tip.x + nx * L * 0.5, tip.y + ny * L * 0.5); ctx.lineTo(tip.x - nx * L * 0.5, tip.y - ny * L * 0.5); ctx.stroke(); }
-  else if (kind === 'dot') { ctx.arc(tip.x, tip.y, L * 0.3, 0, 7); ctx.fill(); }
-  else if (kind === 'circle') { ctx.arc(tip.x, tip.y, L * 0.32, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke(); }
-  else if (kind === 'square') { const r = L * 0.28; ctx.moveTo(tip.x + (d.x + nx) * r, tip.y + (d.y + ny) * r); ctx.lineTo(tip.x + (d.x - nx) * r, tip.y + (d.y - ny) * r); ctx.lineTo(tip.x - (d.x + nx) * r, tip.y - (d.y + ny) * r); ctx.lineTo(tip.x - (d.x - nx) * r, tip.y - (d.y - ny) * r); ctx.closePath(); ctx.fill(); }
-  else if (kind === 'diamond') { const r = L * 0.4; ctx.moveTo(tip.x + d.x * r, tip.y + d.y * r); ctx.lineTo(tip.x + nx * r * 0.7, tip.y + ny * r * 0.7); ctx.lineTo(tip.x - d.x * r, tip.y - d.y * r); ctx.lineTo(tip.x - nx * r * 0.7, tip.y - ny * r * 0.7); ctx.closePath(); ctx.fill(); }
+// The parts of a head at `tip` pointing along unit vector d: polygons and circles, each filled (fill: 'line' | 'paper') and/or stroked.
+export function headParts(kind, tip, d, st) {
+  const sw = st.sw || 1, L = arrowLen(sw, st.hs), w = L * 0.36 * (st.hw || 1), nx = -d.y, ny = d.x;
+  const P = (a, b) => [tip.x - d.x * a + nx * b, tip.y - d.y * a + ny * b];
+  switch (kind) {
+    case 'arrow': return [{ poly: [P(0, 0), P(L, w), P(L, -w)], fill: 'line' }];
+    case 'stealth': return [{ poly: [P(0, 0), P(L, w * 1.15), P(L * 0.62, 0), P(L, -w * 1.15)], fill: 'line' }];
+    case 'triangle': return [{ poly: [P(sw * 0.6, 0), P(L, w), P(L, -w)], fill: 'paper', stroke: true }];
+    case 'open': return [{ poly: [P(L, w * 1.1), P(0, 0), P(L, -w * 1.1)], open: true, stroke: true }];
+    case 'half': return [{ poly: [P(0, 0), P(L, w * 1.3), P(L * 0.8, 0)], fill: 'line' }];
+    case 'bar': return [{ poly: [P(0, L * 0.5 * (st.hw || 1)), P(0, -L * 0.5 * (st.hw || 1))], open: true, stroke: true }];
+    case 'dot': return [{ circle: [tip.x, tip.y, L * 0.3], fill: 'line' }];
+    case 'circle': return [{ circle: [tip.x, tip.y, L * 0.32], fill: 'paper', stroke: true }];
+    case 'square': { const r = L * 0.28; return [{ poly: [P(-r, r), P(-r, -r), P(r, -r), P(r, r)], fill: 'line' }]; }
+    case 'diamond': { const r = L * 0.4, q = r * 0.7 * (st.hw || 1); return [{ poly: [P(-r, 0), P(0, q), P(r, 0), P(0, -q)], fill: 'line' }]; }
+  }
+  return [];
+}
+// How far the line is shortened under a head so it does not show through it.
+export function headBack(kind, st) {
+  const L = arrowLen(st.sw || 1, st.hs);
+  return { arrow: L * 0.8, stealth: L * 0.6, half: L * 0.75, triangle: L, circle: L * 0.32 }[kind] || 0;
+}
+function drawHead(ctx, kind, tip, d, st, color) {
+  ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = st.sw; ctx.setLineDash([]); ctx.lineJoin = 'miter'; ctx.lineCap = 'butt';
+  for (const q of headParts(kind, tip, d, st)) {
+    ctx.beginPath();
+    if (q.circle) ctx.arc(q.circle[0], q.circle[1], q.circle[2], 0, 7); else { q.poly.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); if (!q.open) ctx.closePath(); }
+    if (q.fill) { ctx.fillStyle = q.fill === 'paper' ? '#ffffff' : color; ctx.fill(); }
+    if (q.stroke) ctx.stroke();
+  }
 }
 export function drawShape(ctx, s) {
   const st = s.st || {};
@@ -344,9 +366,9 @@ export function drawShape(ctx, s) {
     // pull the stroke end back under a filled arrowhead so it does not poke through the tip
     const nodes = s.nodes.map(n => ({ ...n }));
     d0 = endDir(s.nodes, false); d1 = endDir(s.nodes, true);
-    const back = arrowLen(st.sw || 1, st.hs) * 0.8;
-    if (st.as === 'arrow' && d0) { nodes[0].x -= d0.x * back; nodes[0].y -= d0.y * back; }
-    if (st.ae === 'arrow' && d1) { const e = nodes[nodes.length - 1]; e.x -= d1.x * back; e.y -= d1.y * back; }
+    const b0 = headBack(st.as, st), b1 = headBack(st.ae, st);
+    if (b0 && d0) { nodes[0].x -= d0.x * b0; nodes[0].y -= d0.y * b0; }
+    if (b1 && d1) { const e = nodes[nodes.length - 1]; e.x -= d1.x * b1; e.y -= d1.y * b1; }
     path = buildPath([{ nodes, closed: false }, ...(s.subs || [])]);
   } else path = shapePath(s);
   const bb = isGrad(st.fill) || isGrad(st.stroke) ? shapeBBox(s) : null;
@@ -359,8 +381,8 @@ export function drawShape(ctx, s) {
     ctx.stroke(path);
     if (heads) {
       const n = s.nodes;
-      if (d0 && st.as && st.as !== 'none') drawHead(ctx, st.as, n[0], d0, st.sw, solidOf(st.stroke), st.hs);
-      if (d1 && st.ae && st.ae !== 'none') drawHead(ctx, st.ae, n[n.length - 1], d1, st.sw, solidOf(st.stroke), st.hs);
+      if (d0 && st.as && st.as !== 'none') drawHead(ctx, st.as, n[0], d0, st, solidOf(st.stroke));
+      if (d1 && st.ae && st.ae !== 'none') drawHead(ctx, st.ae, n[n.length - 1], d1, st, solidOf(st.stroke));
     }
   }
   ctx.restore();

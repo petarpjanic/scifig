@@ -7,7 +7,6 @@ import { thumb, maskThumb } from './ops.js';
 import { TOOL_ORDER } from './tools.js';
 import { colorPicker, pickColor } from './color.js';
 import { DEV_PARAMS, developHD, autoRange } from './hd.js';
-import { driveDim, relockDims } from './dims.js';
 import { pickPaint, STYLES, styleOf, styleChip } from './styles.js';
 import { cssPaint, isGrad } from './core.js';
 
@@ -203,15 +202,15 @@ const styleDefs = st => [{ id: 'stroke', label: 'Stroke', type: 'color', none: t
   { id: 'fill', label: 'Fill', type: 'color', none: true, gradient: true, fallback: '#ffffff' }, { id: 'dash', label: 'Line', type: 'select', options: DASH_OPTS, tip: 'Solid, dashed, dotted or dash-dot' },
   ...(st.dash && st.dash !== 'solid' ? [...(st.dash !== 'dotted' ? [{ id: 'dl', label: 'Dash', type: 'number', min: 0.1, step: 0.5, tip: 'Dash length, in line widths' }] : []), { id: 'dg', label: 'Gap', type: 'number', min: 0.1, step: 0.5, tip: 'Gap between dashes or dots, in line widths (smaller = denser)' }] : []),
   { id: 'as', label: 'Start', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the start' }, { id: 'ae', label: 'End', type: 'select', options: HEADS, tip: 'Arrowhead or marker at the end' },
-  ...((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none') ? [{ id: 'hsPct', label: 'Head %', type: 'number', min: 10, step: 10, tip: 'Arrowhead size' }] : []),
+  ...((st.as && st.as !== 'none') || (st.ae && st.ae !== 'none') ? [{ id: 'hsPct', label: 'Head size %', type: 'number', min: 10, step: 10, tip: 'Length of the arrowheads (100 = normal for this line width)' }, { id: 'hwPct', label: 'Head width %', type: 'number', min: 10, step: 10, tip: 'Spread of the arrowheads: more than 100 = wide and shallow, less = narrow and pointed' }] : []),
   { id: 'alphaPct', label: 'Opacity', type: 'number', min: 0, max: 100, tip: 'Opacity in percent' }, { id: 'shadow', label: 'Drop shadow', type: 'check' },
   ...(st.shadow ? [{ id: 'shBlur', label: 'Blur', type: 'len', min: 0 }, { id: 'shX', label: 'Offset X', type: 'len' }, { id: 'shY', label: 'Offset Y', type: 'len' }, { id: 'shA', label: 'Shadow %', type: 'number', min: 0, max: 100 }] : [])];
 const textDefs = f => [{ id: 'font', label: 'Font', type: 'select', options: fontOpts(f) }, { id: 'size', label: 'Size', type: 'len', unit: 'pt', min: 0.01, tip: 'Text size' }, { id: 'bold', label: 'B', type: 'check' }, { id: 'italic', label: 'I', type: 'check' }, { id: 'align', label: 'Align', type: 'select', options: ['left', 'center', 'right'] }];
-const styleVals = (st, d) => ({ stroke: st.stroke || null, sw: st.sw || 0, fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100),
+const styleVals = (st, d) => ({ stroke: st.stroke || null, sw: st.sw || 0, fill: st.fill || null, dash: st.dash || 'solid', dl: st.dl || (DASHES[st.dash] || [4])[0], dg: st.dg || (DASHES[st.dash] || [0, 3])[1], as: st.as || 'none', ae: st.ae || 'none', hsPct: Math.round((st.hs || 1) * 100), hwPct: Math.round((st.hw || 1) * 100), alphaPct: Math.round((st.alpha ?? 1) * 100),
   shadow: !!st.shadow, shBlur: st.shadow ? st.shadow.blur ?? 6 : 6, shX: st.shadow ? st.shadow.x ?? 3 : 3, shY: st.shadow ? st.shadow.y ?? 3 : 3, shA: st.shadow ? Math.round((st.shadow.a ?? 0.45) * 100) : 45 });
 // Apply one style field to a style object (shared by selected shapes and the defaults for new ones).
 function setStyle(t, id, v, d) {
-  if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'hsPct') t.hs = v / 100; else if (id === 'shadow') { if (v) t.shadow = { c: '#000000', a: 0.4, blur: 2 * d.ptPx, x: d.ptPx, y: 1.5 * d.ptPx }; else delete t.shadow; }
+  if (id === 'alphaPct') t.alpha = v / 100; else if (id === 'hsPct') t.hs = v / 100; else if (id === 'hwPct') t.hw = v / 100; else if (id === 'shadow') { if (v) t.shadow = { c: '#000000', a: 0.4, blur: 2 * d.ptPx, x: d.ptPx, y: 1.5 * d.ptPx }; else delete t.shadow; }
   else if (id === 'shBlur' || id === 'shX' || id === 'shY' || id === 'shA') { if (t.shadow) t.shadow[{ shBlur: 'blur', shX: 'x', shY: 'y', shA: 'a' }[id]] = id === 'shA' ? v / 100 : v; }
   else t[id] = v;
   if (id === 'dash') { delete t.dl; delete t.dg; }
@@ -236,7 +235,7 @@ function objectBar(bar, d) {
     bar.append(grp(onlyDims ? 'Lines and arrows' : 'Line and fill', paramUI(styleDefs(st).filter(p => !onlyDims || !['fill', 'dash', 'dl', 'dg', 'shadow', 'shBlur', 'shX', 'shY', 'shA'].includes(p.id)), styleVals(st, d), (id, v, fin) => {
       for (const s of geo) setStyle(s.st || (s.st = {}), id, v, d);
       // what you change becomes the default for the next shape of that kind (dimensions keep their own)
-      if (id !== 'alphaPct') { if (onlyDims) { const D2 = S.dimStyle || (S.dimStyle = {}); if (id === 'sw') D2.swPt = v / d.ptPx; else if (id === 'hsPct') D2.hs = v / 100; else D2[id] = v; } else setDefault(S.style, id, v, d); app.saveSettings(); }
+      if (id !== 'alphaPct') { if (onlyDims) { const D2 = S.dimStyle || (S.dimStyle = {}); if (id === 'sw') D2.swPt = v / d.ptPx; else if (id === 'hsPct') D2.hs = v / 100; else if (id === 'hwPct') D2.hw = v / 100; else D2[id] = v; } else setDefault(S.style, id, v, d); app.saveSettings(); }
       touchAll(); if (fin) app.commit('Style'); else app.refresh('render'); if (fin && SHAPE_REBUILD.includes(id)) app.refresh('props');
     }, IN)));
     const sp = geo.filter(s => s.type === 'path' && s.nodes.some(n => n.a));
@@ -247,15 +246,16 @@ function objectBar(bar, d) {
     const t0 = texts[0] || dims[0], tv = { font: t0.font || 'Arial', size: t0.size, align: t0.align || 'left', bold: !!t0.bold, italic: !!t0.italic, fill: (t0.st && t0.st.fill) || '#000000', dec: t0.dec ?? 2, label: t0.text || '' };
     const defs = texts.length ? [...textDefs(tv.font), { id: 'fill', label: 'Colour', type: 'color', fallback: '#000000' }] : [...textDefs(tv.font).slice(0, 2), { id: 'dec', label: 'Decimals', type: 'number', min: 0, max: 6 }, { id: 'label', label: 'Label', type: 'text', tip: 'Leave empty to show the measured length' }];
     if (dims.length === 1 && sel.length === 1) { // a dimension both labels and constrains
-      const dm = dims[0], att = (dm.ra ? 1 : 0) + (dm.rb ? 1 : 0);
-      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Value', type: 'len', min: 1e-9, tip: att ? 'Type a new value: the attached shape is resized or moved to match (or double-click the value on the drawing)' : 'Not attached to a shape: this only moves the end of the dimension' },
-        { id: 'lock', label: 'Driving (constrains the shape)', type: 'check', tip: 'On, as in Fusion 360: the shape keeps this length; dragging it cannot change it. Off: a reference dimension that only shows the length and follows the shape.' }, { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: the dimension is a working constraint only, shown faintly and left out of exported files' },
-        { id: 'off', label: 'Offset', type: 'len', tip: 'Distance of the dimension line from the measured points' }],
-        { len: dist(dm.a, dm.b), lock: dm.lock != null, note: dm.note !== false, off: dm.off || 0 }, (id, v) => {
-          if (id === 'len' && v > 0) driveDim(d, dm, v); else if (id === 'lock') { if (v) dm.lock = dist(dm.a, dm.b); else delete dm.lock; const D2 = S.dimStyle || (S.dimStyle = {}); D2.driving = v; app.saveSettings(); }
-          else if (id === 'note') dm.note = v; else if (id === 'off') dm.off = v;
+      const dm = dims[0];
+      bar.append(grp('Dimension', paramUI([{ id: 'len', label: 'Length', type: 'len', min: 1e-9, tip: 'Distance between the two ends. Typing a value moves the second end; the shapes are not changed.' },
+        { id: 'off', label: 'Offset', type: 'len', tip: 'Distance of the dimension line from the measured points' }, { id: 'lwPct', label: 'Legs %', type: 'number', min: 5, max: 200, step: 5, tip: 'Width of the two perpendicular lines, in % of the dimension line' },
+        { id: 'note', label: 'Show in export', type: 'check', tip: 'Off: shown faintly while you work and left out of exported and printed files' }],
+        { len: dist(dm.a, dm.b), off: dm.off || 0, lwPct: Math.round((dm.lw ?? 0.5) * 100), note: dm.note !== false }, (id, v) => {
+          if (id === 'len' && v > 0) { const L0 = dist(dm.a, dm.b) || 1; dm.b = { x: dm.a.x + (dm.b.x - dm.a.x) / L0 * v, y: dm.a.y + (dm.b.y - dm.a.y) / L0 * v }; }
+          else if (id === 'off') dm.off = v; else if (id === 'note') dm.note = v;
+          else if (id === 'lwPct') { dm.lw = v / 100; (S.dimStyle || (S.dimStyle = {})).lw = v / 100; app.saveSettings(); }
           touchAll(); app.commit('Dimension');
-        }, IN), el('span', 'gl', att === 2 ? 'attached to the shape' : att ? 'one end attached' : 'not attached')));
+        }, IN)));
     }
     bar.append(grp(texts.length ? 'Text' : 'Label', paramUI(defs, tv, (id, v, fin) => {
       if (id === 'font') needFont(v);
@@ -279,7 +279,6 @@ function objectBar(bar, d) {
     else if (id === 'turn' && v) m = mRotateAbout(-v * Math.PI / 180, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
     else if (id === 'len' || id === 'ang') { const [a, c] = line.nodes, L = id === 'len' ? px : dist(a, c), an = (id === 'ang' ? v : g.ang) * Math.PI / 180; c.x = a.x + L * Math.cos(an); c.y = a.y - L * Math.sin(an); }
     if (m) for (const s of shapes) transformShape(s, m);
-    relockDims(d, shapes); // a size typed here wins over driving dimensions on these shapes
     touchAll(); app.commit('Transform');
   }, IN)));
 }
@@ -299,7 +298,7 @@ function buildOptbar() {
     const S = app.settings;
     if (t.id === 'text') bar.append(grp('New text', paramUI(textDefs(S.text.font), { ...S.text, size: S.text.sizePt * d.ptPx }, (id, v) => { if (id === 'font') needFont(v); if (id === 'size') S.text.sizePt = v / d.ptPx; else S.text[id] = v; app.saveSettings(); }, IN)));
     else {
-      if (t.id === 'dim') { const D2 = S.dimStyle || {}; bar.append(grp('New dimension', el('div', 'props-note', `Text ${fmt(D2.sizePt ?? S.text.sizePt, 2)} pt ${D2.font || S.text.font}, line ${fmt(D2.swPt ?? 0.75, 2)} pt, ${D2.driving === false ? 'reference' : 'driving'}. Change a placed dimension and the next ones use the same settings.`))); }
+      if (t.id === 'dim') { const D2 = S.dimStyle || {}; bar.append(grp('New dimension', el('div', 'props-note', `Text ${fmt(D2.sizePt ?? S.text.sizePt, 2)} pt ${D2.font || S.text.font}, line ${fmt(D2.swPt ?? 0.75, 2)} pt, legs ${Math.round((D2.lw ?? 0.5) * 100)}%. Change a placed dimension and the next ones use the same settings.`))); }
       else {
         const vals = styleVals({ ...S.style, sw: S.style.swPt * d.ptPx }, d);
         bar.append(stylesGroup('Style templates', tp => { const o = styleOf(tp, d); o.swPt = (o.sw ?? S.style.swPt * d.ptPx) / d.ptPx; delete o.sw; for (const k of ['fill', 'stroke', 'shadow']) if (!(k in o)) o[k] = S.style[k]; Object.assign(S.style, o); if (!o.shadow) delete S.style.shadow; app.saveSettings(); app.refresh('tool'); app.toast('The next shapes use “' + tp.name + '”'); }));

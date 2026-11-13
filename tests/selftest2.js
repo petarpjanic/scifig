@@ -1,14 +1,13 @@
 // Scripted checks for the second round of features, run with index.html?test2 — results go to the console.
 import { app } from '../js/app.js';
 import { view } from '../js/view.js';
-import { Doc, newDoc, flatten, vectorLayer, adjustLayer, dimShapes, uid, rasterLayer } from '../js/core.js';
+import { Doc, newDoc, flatten, vectorLayer, adjustLayer, dimShapes, uid, rasterLayer, dist } from '../js/core.js';
 import { openFiles, toSVG, parseSVG } from '../js/io.js';
 import { setSelection, clearSelection, blueNoise, withResolution, defaultParams, refineSelection } from '../js/imaging.js';
 import { tiffHi, png16, toU16, hdComposite, developHD } from '../js/hd.js';
 import { slantedEdge, spectrum } from '../js/analyze.js';
 import { inpaint } from '../js/inpaint.js';
 import { rgbToLab, labToRgb, rgbToHsv, hsvToRgb } from '../js/color.js';
-import { driveDim } from '../js/dims.js';
 
 const out = []; let fails = 0;
 const ok = (name, cond, info = '') => { if (!cond) fails++; const s = (cond ? 'PASS ' : 'FAIL ') + name + (info !== '' ? '  ' + info : ''); out.push(s); console.log(s); };
@@ -50,16 +49,14 @@ async function run() {
   app.setTool('dim'); click(300, 200); click(420, 200); click(360, 170);
   s = last(V); const parts = s.type === 'dim' ? dimShapes(s) : [];
   ok('dimension shape', s.type === 'dim' && near(s.b.x - s.a.x, 120) && Math.abs(Math.abs(s.off) - 30) < 1 && parts[3].text === (120 / mm).toFixed(2) + ' mm', s.type === 'dim' ? parts[3].text + ' off ' + s.off : s.type);
-  // ---- dimensions as constraints ----
+  // ---- dimensions are decorative ----
   const ln = V.shapes[1], n0 = { ...ln.nodes[0] }, n1 = { ...ln.nodes[1] }; // the 40 px horizontal line
   app.setTool('dim'); click(n0.x, n0.y); click(n1.x, n1.y); click((n0.x + n1.x) / 2, n0.y - 25);
-  const dm = last(V); ok('dimension attaches to the line ends', dm.type === 'dim' && dm.ra && dm.rb && dm.ra.id === ln.id && dm.rb.id === ln.id, JSON.stringify([dm.ra, dm.rb]));
-  driveDim(d, dm, 10 * mm); app.commit('drive'); ok('typing a length resizes the line', near(ln.nodes[1].x - ln.nodes[0].x, 10 * mm) && near(dm.b.x, ln.nodes[1].x) && dimShapes(dm)[3].text === '10.00 mm', `${ln.nodes[1].x - ln.nodes[0].x} ${dimShapes(dm)[3].text}`);
-  dm.lock = 10 * mm; ln.nodes[1].x += 70; ln.nodes[1].y += 20; V.touch(); app.commit('pull');
-  ok('locked dimension pulls the point back to its length', near(Math.hypot(ln.nodes[1].x - ln.nodes[0].x, ln.nodes[1].y - ln.nodes[0].y), 10 * mm, 1e-4) && ln.nodes[1].y > n1.y, JSON.stringify(ln.nodes[1]));
-  ln.nodes[0].x -= 15; ln.nodes[1].x -= 15; V.touch(); app.commit('shift'); ok('dimension follows a moved shape', near(dm.a.x, ln.nodes[0].x) && near(dm.b.x, ln.nodes[1].x));
+  const dm = last(V); ok('dimension measures the line', dm.type === 'dim' && !dm.ra && !dm.rb && near(dist(dm.a, dm.b), 40) && dimShapes(dm)[3].text === (40 / mm).toFixed(2) + ' mm', dimShapes(dm)[3].text);
+  ln.nodes[1].x += 70; V.touch(); app.commit('pull');
+  ok('dimension does not follow or change the shape', near(dm.b.x, n1.x) && near(ln.nodes[1].x, n1.x + 70));
   const rc = V.shapes[2]; app.setTool('dim'); click(rc.x, rc.y); click(rc.x + rc.w, rc.y); click(rc.x + rc.w / 2, rc.y - 20);
-  const dr = last(V); driveDim(d, dr, 30 * mm); app.commit('rect'); ok('dimension drives a rectangle width', dr.ra && dr.rb && near(rc.w, 30 * mm) && near(rc.h, 10 * mm), `${rc.w / mm} ${rc.h / mm}`);
+  const dr = last(V); ok('dimension legs are thinner than its line', near(dimShapes(dr)[1].st.sw, dr.st.sw * 0.5), dimShapes(dr)[1].st.sw + ' ' + dr.st.sw);
   const lbl = dimShapes(dr)[3], hp = [Math.round(lbl.x), Math.round(lbl.y - lbl.size * 0.3)], dark = c => { let m = 255; for (let i = -6; i <= 6; i++) m = Math.min(m, px(c, hp[0] + i, hp[1])[0]); return m; };
   const shown = dark(flatten(d)); app.run('view.dims'); const hidden = dark(flatten(d)); app.run('view.dims');
   ok('View ▸ Show Dimensions hides them', shown < 120 && hidden === 255 && !d.hideDims, shown + ' ' + hidden);

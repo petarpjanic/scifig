@@ -79,3 +79,9 @@ Google Fonts for web fonts. Licences of vendored code: LibRaw (LGPL/CDDL), heic-
 - File ▸ New with page presets (A4, Letter, journal columns, screens), portrait/landscape, remembered; File ▸ Print; filter settings remembered.
 - Marquee, crop and gradient snap; image-layer edges and the selection are snap targets.
 - Tests: `?sample&test`, `?test2`, `?sample&test3`.
+
+## Changed in v5 (2026-11-13)
+
+- Dimensions are decorative vector shapes again (no attachment, following or constraints); thinner legs (`lw`, default 50%); double-click edits the label.
+- Arrowheads: arrow, swept, hollow, open V, half, bar, dot, hollow circle, square, diamond; Head size % and Head width % (`hs`, `hw`); shared by canvas and SVG (`headParts` in core.js).
+- `js/print.js`: Print dialog with preview, paper sizes, orientation, real size / fit / %, margins, centring, crop marks, whole picture or selection.
