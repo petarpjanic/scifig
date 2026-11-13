@@ -440,24 +440,42 @@ export async function saveDoc(d, saveAs) {
 // ---------- autosave (IndexedDB) ----------
 const idb = () => new Promise((ok, bad) => { const r = indexedDB.open('scifig', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); });
 async function kv(mode, fn) { const db = await idb(); return new Promise((ok, bad) => { const tx = db.transaction('kv', mode), rq = fn(tx.objectStore('kv')); tx.oncomplete = () => ok(rq.result); tx.onerror = () => bad(tx.error); }); }
+// The open documents are mirrored into the browser shortly after every change, so a page reload reopens them.
+// When everything has been closed, the last documents are kept (open: false) for "Restore last session".
 let saveT = null;
-export function scheduleAutosave() {
-  clearTimeout(saveT);
-  saveT = setTimeout(async () => {
-    try {
-      const px = app.docs.reduce((a, d) => a + d.layers.reduce((b, L) => b + (L.canvas ? L.canvas.width * L.canvas.height : 0), 0), 0);
-      if (px > 120e6 || !app.docs.length) return; // too large to mirror into browser storage (rely on File ▸ Save), or nothing open: keep the last session
-      await kv('readwrite', s => s.put({ docs: app.docs.map(d => d.toJSON({ maxHD: 48e6 })), active: app.docs.indexOf(app.doc), time: Date.now() }, 'session'));
-    } catch (e) { console.warn('autosave failed', e); }
-  }, 2500);
+const LS = 'scifig.session';
+const sessionData = () => ({ docs: app.docs.map(d => d.toJSON({ maxHD: 48e6 })), active: app.docs.indexOf(app.doc), time: Date.now(), open: true });
+// Leaving the page: an asynchronous save may not finish, so documents up to a few MB are also written synchronously.
+export function backupNow() {
+  try { if (!app.docs.length) { localStorage.removeItem(LS); return; } const t = JSON.stringify(sessionData()); if (t.length < 4.5e6) localStorage.setItem(LS, t); } catch (e) { /* too large for this storage: the asynchronous save is still attempted */ }
 }
-export async function sessionInfo() { try { const s = await kv('readonly', st => st.get('session')); return s && s.docs && s.docs.length ? { n: s.docs.length, time: s.time, names: s.docs.map(o => o.name) } : null; } catch (e) { return null; } }
+async function readSession() {
+  let s = null, b = null;
+  try { s = await kv('readonly', st => st.get('session')); } catch (e) { /* no database */ }
+  try { b = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e) { /* no backup */ }
+  return b && (!s || b.time > s.time) ? b : s;
+}
+export async function flushSession() {
+  clearTimeout(saveT); saveT = null;
+  try {
+    if (!app.docs.length) { // everything was closed: keep the last documents for "Restore last session" without reopening them
+      const s = await readSession(); if (s && s.open) { s.open = false; s.time = Date.now(); await kv('readwrite', st => st.put(s, 'session')); }
+      try { localStorage.removeItem(LS); } catch (e) { /* storage unavailable */ } return;
+    }
+    const px = app.docs.reduce((a, d) => a + d.layers.reduce((b, L) => b + (L.canvas ? L.canvas.width * L.canvas.height : 0), 0), 0);
+    if (px > 120e6) return; // too large to mirror into browser storage; rely on File ▸ Save
+    await kv('readwrite', s => s.put(sessionData(), 'session'));
+  } catch (e) { console.warn('autosave failed', e); }
+}
+export function scheduleAutosave() { clearTimeout(saveT); saveT = setTimeout(flushSession, 700); }
+export async function sessionInfo() { try { const s = await readSession(); return s && s.docs && s.docs.length ? { n: s.docs.length, time: s.time, names: s.docs.map(o => o.name), open: s.open !== false } : null; } catch (e) { return null; } }
 export async function restoreSession() {
   try {
-    const s = await kv('readonly', st => st.get('session'));
+    const s = await readSession();
     if (!s || !s.docs || !s.docs.length) return false;
     for (const o of s.docs) { const d = await Doc.fromJSON(o); app.docs.push(d); }
     app.setDoc(app.docs[Math.max(0, Math.min(app.docs.length - 1, s.active))]);
+    scheduleAutosave(); // move a quick backup into the main store
     return true;
   } catch (e) { console.warn('restore failed', e); return false; }
 }

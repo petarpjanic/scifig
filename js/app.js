@@ -99,7 +99,7 @@ class App {
     this.refresh('tool', 'overlay', 'props');
   }
 
-  addDoc(doc) { this.docs.push(doc); this.setDoc(doc); }
+  addDoc(doc) { this.docs.push(doc); this.setDoc(doc); this.emit('changed'); }
   setDoc(doc) {
     if (this.tool && this.tool.cancel) this.tool.cancel();
     this.doc = doc;

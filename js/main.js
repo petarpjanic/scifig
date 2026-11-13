@@ -6,7 +6,7 @@ import { registerImaging, defaultParams } from './imaging.js';
 import { registerTools } from './tools.js';
 import { registerCommands, loadUserPlugins, pasteInternal } from './commands.js';
 import { initUI, dialogOpen } from './ui.js';
-import { openFiles, scheduleAutosave } from './io.js';
+import { openFiles, scheduleAutosave, flushSession, backupNow, sessionInfo, restoreSession } from './io.js';
 import { initWelcome } from './welcome.js';
 import { registerAnalyze } from './analyze.js';
 import plugins from '../plugins/index.js';
@@ -88,13 +88,17 @@ document.addEventListener('paste', e => {
   else pasteInternal();
 });
 window.addEventListener('blur', () => { if (app.clipboard) app.clipboard.fresh = false; view.space = false; });
-window.addEventListener('beforeunload', () => scheduleAutosave());
+// Leaving or reloading the page: finish a shape that is still being drawn, then save the open documents now.
+const leave = () => { const t = app.tool; if (app.doc && t && t.finish && (t.pts || t.nodes) && (t.pts || t.nodes).length > 1) t.finish(false); backupNow(); flushSession(); };
+window.addEventListener('pagehide', leave);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') leave(); });
 
 // ---------- start ----------
 const q = new URLSearchParams(location.search);
 (async () => {
-  // nothing opens by itself: the welcome screen offers New, Open, Recent and Restore last session
-  if (q.has('sample')) app.addDoc(sample()); else app.refresh('all');
+  // a reload reopens the documents that were open; after closing everything, it starts on the welcome screen
+  if (q.has('sample')) app.addDoc(sample());
+  else { const s = q.has('test2') ? null : await sessionInfo(); if (!(s && s.open && (await restoreSession()))) app.refresh('all'); }
   window.scifigReady = window.figuraReady = true;
   if (q.has('test')) import('../tests/selftest.js');
   if (q.has('test2')) import('../tests/selftest2.js');
