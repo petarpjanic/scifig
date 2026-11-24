@@ -106,8 +106,20 @@ export function hdFromInts(arr, w, h, ch, max, o) { // interleaved integer sampl
 // ---------- saving ----------
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = s => { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
-Doc.packHD = (hd, o) => o.maxHD && hd.data.length > o.maxHD ? undefined : { w: hd.w, h: hd.h, bits: hd.bits, dev: hd.dev, src: hd.src, z: b64(pako.deflate(new Uint8Array(hd.data.buffer, hd.data.byteOffset, hd.data.byteLength))) };
-Doc.unpackHD = p => { const u = pako.inflate(unb64(p.z)); return makeHD(p.w, p.h, new Float32Array(u.buffer, u.byteOffset, u.byteLength / 4), { bits: p.bits, dev: p.dev, src: p.src }); };
+// Files: deflated base64. The browser session store (o.blobHD): the raw floats as a Blob, made once per float array
+// (arrays are replaced, never changed in place), so saving the session again costs nothing.
+const hdBlobs = new WeakMap();
+Doc.packHD = (hd, o) => {
+  if (o.maxHD && hd.data.length > o.maxHD) return undefined;
+  const m = { w: hd.w, h: hd.h, bits: hd.bits, dev: hd.dev, src: hd.src };
+  if (o.blobHD) { let b = hdBlobs.get(hd.data); if (!b) hdBlobs.set(hd.data, b = new Blob([hd.data])); return { ...m, f32: b }; }
+  return { ...m, z: b64(pako.deflate(new Uint8Array(hd.data.buffer, hd.data.byteOffset, hd.data.byteLength))) };
+};
+Doc.unpackHD = async p => {
+  const o = { bits: p.bits, dev: p.dev, src: p.src };
+  if (p.f32) return makeHD(p.w, p.h, new Float32Array(await p.f32.arrayBuffer()), o);
+  const u = pako.inflate(unb64(p.z)); return makeHD(p.w, p.h, new Float32Array(u.buffer, u.byteOffset, u.byteLength / 4), o);
+};
 
 // ---------- high-bit export ----------
 const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();

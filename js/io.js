@@ -442,12 +442,47 @@ const idb = () => new Promise((ok, bad) => { const r = indexedDB.open('scifig', 
 async function kv(mode, fn) { const db = await idb(); return new Promise((ok, bad) => { const tx = db.transaction('kv', mode), rq = fn(tx.objectStore('kv')); tx.oncomplete = () => ok(rq.result); tx.onerror = () => bad(tx.error); }); }
 // The open documents are mirrored into the browser shortly after every change, so a page reload reopens them.
 // When everything has been closed, the last documents are kept (open: false) for "Restore last session".
-let saveT = null;
+let saveT = null, changeN = 0, savedN = 0;
 const LS = 'scifig.session';
+const pixels = () => app.docs.reduce((a, d) => a + d.layers.reduce((b, L) => b + (L.canvas ? L.canvas.width * L.canvas.height : 0), 0), 0);
 const sessionData = () => ({ docs: app.docs.map(d => d.toJSON({ maxHD: 48e6 })), active: app.docs.indexOf(app.doc), time: Date.now(), open: true });
+// The session store keeps every layer picture as a PNG Blob, encoded asynchronously and only when its pixels changed:
+// showing, hiding, renaming or restyling layers costs no encoding. The pictures are taken from the last undo snapshot,
+// whose copies never change, so a stroke or a filter preview that is still in progress is never cached.
+const pics = new WeakMap(); // doc -> Map(layer id, or id + ':m' for a mask -> { rev, blob })
+async function encodePics(d) {
+  let m = pics.get(d); if (!m) pics.set(d, m = new Map());
+  const snap = d.hist[d.hi], live = new Set(), jobs = [];
+  for (const L of d.layers) {
+    const o = snap && snap.layers.find(q => q.id === L.id);
+    for (const [key, rev, c] of [[L.id, L.rev, L.type === 'raster' && o && o.rev === L.rev && o.content], [L.id + ':m', L.mrev, L.mask && o && o.mrev === L.mrev && o.mask]]) {
+      if (!c) continue;
+      live.add(key);
+      const e = m.get(key); if (e && e.rev === rev) continue;
+      jobs.push(blobOf(c, 'image/png').then(blob => { if (blob) m.set(key, { rev, blob }); }));
+    }
+  }
+  await Promise.all(jobs);
+  for (const k of [...m.keys()]) if (!live.has(k)) m.delete(k);
+  return m;
+}
+async function sessionStore() {
+  const docs = [];
+  for (const d of app.docs) {
+    const m = await encodePics(d);
+    docs.push(d.toJSON({ maxHD: 48e6, blobHD: true, pic: (c, key, rev) => { const e = m.get(key); return e && e.rev === rev ? e.blob : c.toDataURL('image/png'); } }));
+  }
+  return { docs, active: app.docs.indexOf(app.doc), time: Date.now(), open: true };
+}
 // Leaving the page: an asynchronous save may not finish, so documents up to a few MB are also written synchronously.
+// Not when the session store is already up to date, and not for big pictures: encoding them would freeze the page
+// every time it is hidden, and they would not fit into this storage anyway.
 export function backupNow() {
-  try { if (!app.docs.length) { localStorage.removeItem(LS); return; } const t = JSON.stringify(sessionData()); if (t.length < 4.5e6) localStorage.setItem(LS, t); } catch (e) { /* too large for this storage: the asynchronous save is still attempted */ }
+  try {
+    if (!app.docs.length) { localStorage.removeItem(LS); return; }
+    if (savedN === changeN || pixels() > 6e6) return;
+    const t = JSON.stringify(sessionData()); if (t.length < 4.5e6) localStorage.setItem(LS, t);
+  } catch (e) { /* too large for this storage: the asynchronous save is still attempted */ }
 }
 async function readSession() {
   let s = null, b = null;
@@ -462,12 +497,13 @@ export async function flushSession() {
       const s = await readSession(); if (s && s.open) { s.open = false; s.time = Date.now(); await kv('readwrite', st => st.put(s, 'session')); }
       try { localStorage.removeItem(LS); } catch (e) { /* storage unavailable */ } return;
     }
-    const px = app.docs.reduce((a, d) => a + d.layers.reduce((b, L) => b + (L.canvas ? L.canvas.width * L.canvas.height : 0), 0), 0);
-    if (px > 120e6) return; // too large to mirror into browser storage; rely on File ▸ Save
-    await kv('readwrite', s => s.put(sessionData(), 'session'));
+    if (pixels() > 120e6) return; // too large to mirror into browser storage; rely on File ▸ Save
+    const n = changeN, data = await sessionStore(); // built before the transaction: it closes when the code waits
+    await kv('readwrite', s => s.put(data, 'session'));
+    savedN = n;
   } catch (e) { console.warn('autosave failed', e); }
 }
-export function scheduleAutosave() { clearTimeout(saveT); saveT = setTimeout(flushSession, 700); }
+export function scheduleAutosave() { changeN++; clearTimeout(saveT); saveT = setTimeout(flushSession, 700); }
 export async function sessionInfo() { try { const s = await readSession(); return s && s.docs && s.docs.length ? { n: s.docs.length, time: s.time, names: s.docs.map(o => o.name), open: s.open !== false } : null; } catch (e) { return null; } }
 export async function restoreSession() {
   try {

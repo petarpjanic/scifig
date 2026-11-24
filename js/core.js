@@ -522,23 +522,29 @@ export class Doc {
   redo() { if (this.hi >= this.hist.length - 1) return false; this.restore(this.hist[++this.hi]); this.dirty = true; return true; }
 
   // ----- native file format -----
+  // o.pic(canvas, key, rev): the stored picture of a layer (key = layer id, + ':m' for its mask); default a PNG data URL.
   toJSON(o = {}) {
+    const pic = (c, key, rev) => o.pic ? o.pic(c, key, rev) : c.toDataURL('image/png');
     return {
       format: 'scifig', version: 2, name: this.name, w: this.w, h: this.h, dpi: this.dpi, unit: this.unit, pxPerUnit: this.pxPerUnit, activeId: this.activeId, hideDims: this.hideDims,
       layers: this.layers.map(L => ({ id: L.id, name: L.name, type: L.type, visible: L.visible, opacity: L.opacity, blend: L.blend, locked: L.locked, x: L.x, y: L.y,
-        png: L.type === 'raster' ? L.canvas.toDataURL('image/png') : undefined, shapes: L.shapes || undefined, adj: L.adj || undefined, params: L.params || undefined,
-        mask: L.mask ? L.mask.toDataURL('image/png') : undefined, maskOn: L.maskOn, hd: L.hd && Doc.packHD ? Doc.packHD(L.hd, o) : undefined })),
+        png: L.type === 'raster' ? pic(L.canvas, L.id, L.rev) : undefined, shapes: L.shapes || undefined, adj: L.adj || undefined, params: L.params || undefined,
+        mask: L.mask ? pic(L.mask, L.id + ':m', L.mrev) : undefined, maskOn: L.maskOn, hd: L.hd && Doc.packHD ? Doc.packHD(L.hd, o) : undefined })),
     };
   }
   static async fromJSON(o) {
     if (!o || (o.format !== 'scifig' && o.format !== 'figura')) throw new Error('Not a SciFig document');
-    const pic = async src => { const img = new Image(); img.src = src; await img.decode(); const c = mk(img.naturalWidth, img.naturalHeight); c.getContext('2d').drawImage(img, 0, 0); return c; };
+    const pic = async src => { // a data URL (files) or a Blob (the browser session store)
+      const img = new Image(), url = src instanceof Blob ? URL.createObjectURL(src) : src; img.src = url;
+      try { await img.decode(); } finally { if (url !== src) URL.revokeObjectURL(url); }
+      const c = mk(img.naturalWidth, img.naturalHeight); c.getContext('2d').drawImage(img, 0, 0); return c;
+    };
     const d = new Doc(o);
     for (const l of o.layers) {
       const L = new Layer({ ...l, mask: null, hd: null });
       if (l.type === 'raster') L.canvas = await pic(l.png);
       if (l.mask) L.mask = await pic(l.mask);
-      if (l.hd && Doc.unpackHD) { try { L.hd = Doc.unpackHD(l.hd); L.hd.rev = L.rev; } catch (e) { console.warn('high-bit data lost', e); } }
+      if (l.hd && Doc.unpackHD) { try { L.hd = await Doc.unpackHD(l.hd); L.hd.rev = L.rev; } catch (e) { console.warn('high-bit data lost', e); } }
       d.layers.push(L);
     }
     d.activeId = o.activeId && d.layer(o.activeId) ? o.activeId : (d.layers[d.layers.length - 1] || {}).id;
