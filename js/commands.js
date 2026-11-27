@@ -419,13 +419,14 @@ export function registerCommands() {
   C('help.guide', 'Guide', () => openPalette('guide'), { enabled: null, shortcut: 'F1' });
 
   const adj = () => [...app.adjustments.keys()].map(k => 'adjust.' + k);
+  C('tool.liquify', 'Liquify', () => app.setTool('liquify'), { shortcut: 'Mod+Shift+X', desc: 'Push, twirl, pucker or bloat pixels with a brush, or drag a selection so its surroundings stretch smoothly', keywords: 'warp push smudge twirl pucker bloat distort reshape move selection' });
   app.menus = [
     ['File', ['file.new', 'file.open', 'file.place', '-', 'file.save', 'file.saveAs', 'file.print', ['Export', ['export.png', 'export.jpg', 'export.tiff', 'export.webp', 'export.svg', 'export.psd', '-', 'export.tiff16', 'export.tiff32', 'export.png16']], 'file.convert', '-', 'file.close']],
     ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', 'edit.duplicate', '-', 'edit.fill', 'edit.contentFill', '-', 'edit.transform', 'edit.transformLayer']],
     ['Image', [['Adjustments (new layer)', adj], 'image.autoLevels', '-', 'image.size', 'image.canvas', 'image.cropSel', '-', 'image.rotCW', 'image.rotCCW', 'image.flipH', 'image.flipV', '-', 'image.units', 'image.setScale']],
     ['Layer', ['layer.newRaster', 'layer.newVector', ['New Adjustment Layer', adj], 'layer.fromSel', '-', ['Mask', ['layer.maskAdd', 'layer.maskHide', '-', 'layer.maskInvert', 'layer.maskApply', 'layer.maskDelete', '-', 'select.fromMask']], '-', 'layer.duplicate', 'layer.delete', 'layer.up', 'layer.down', '-', 'layer.merge', 'layer.rasterize', 'layer.flatten', '-', 'edit.transform']],
     ['Select', ['select.all', 'select.none', 'select.invert', '-', 'select.subject', 'select.fromLayer', 'select.fromChannel', '-', 'select.refine', 'select.feather']],
-    ['Filter', () => [...app.filters.keys()].map(k => 'filter.' + k)],
+    ['Filter', () => ['tool.liquify', '-', ...[...app.filters.keys()].map(k => 'filter.' + k)]],
     ['Object', ['object.front', 'object.forward', 'object.backward', 'object.back', '-', ['Align', ['align.left', 'align.hcenter', 'align.right', '-', 'align.top', 'align.vcenter', 'align.bottom', '-', 'distribute.h', 'distribute.v']], 'object.flipH', 'object.flipV', 'object.toPath', 'path.toggleClose', '-', 'object.scaleBar', 'text.localFonts']],
     ['Analyze', ['analyze.mtf', 'analyze.profile', 'analyze.stats', 'analyze.fft']],
     ['View', ['view.zoomIn', 'view.zoomOut', 'view.fit', 'view.100', '-', 'view.fullscreen', 'view.panels', '-', 'view.rulers', 'view.grid', 'view.snap', 'view.dims', 'view.wheelZoom', '-', 'view.theme']],

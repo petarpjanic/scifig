@@ -175,6 +175,7 @@ const ICONS = {
   brush: '<path d="M16 3l1.500 1.500-7.500 8-2.500.5.5-2.500z"/><path d="M6.500 12.500c-2 0-2.500 2-4 3.500 2.500.5 5 0 5-2.500"/>',
   eraser: '<path d="M8.500 16l-4.500-4.500 8-8 5 5-7.500 7.500z"/><path d="M8.500 16H17M7.500 8l5 5"/>',
   stamp: '<path d="M8 3h4l-.700 6h3.200v3h-9V9h3.200z"/><path d="M4 16.500h12M5.500 14.500h9"/>',
+  liquify: '<path d="M3 15.500c2.500-1 3-4.500 5.500-4.500S12 14 14.500 12 15 6 17 4.500"/><path d="M3 10c1.800-.800 2.400-3 4.400-3"/>',
   remove: '<path d="M4 16l8-8 2.500 2.500-8 8z"/><path d="M14 3l.700 1.800L16.500 5.500l-1.800.700L14 8l-.700-1.800L11.500 5.500l1.800-.700zM17 10.500l.4 1 1 .4-1 .4-.4 1-.4-1-1-.4 1-.4z" fill="currentColor" stroke="none"/>',
   bucket: '<path d="M9 3l6.500 6.500-5 5a1.800 1.800 0 01-2.500 0L4.500 11a1.800 1.800 0 010-2.500z"/><path d="M4.200 10h10.800"/><path d="M16.500 13c1 1.500 1.200 2.500 0 3.500-1.200-1-1-2 0-3.500z"/>',
   gradient: '<rect x="3.500" y="5" width="13" height="10"/><path d="M6.500 5v10M9 5v10M12.500 5v10" stroke-width=".8"/><path d="M4 5.500h2v9H4z" fill="currentColor" stroke="none"/>',
@@ -188,7 +189,7 @@ function buildToolbar() {
     if (id === '-') { bar.append(el('div', 'tsep')); continue; }
     if (id[0] === '#') { bar.append(el('div', 'tlabel', id.slice(1))); continue; }
     const t = app.tools.get(id); if (!t) continue;
-    const b = el('button', 'tool'); b.dataset.tool = id; b.title = `${t.title}  (${t.keyb})\n${t.hint || ''}`;
+    const b = el('button', 'tool'); b.dataset.tool = id; b.title = `${t.title}${t.keyb ? `  (${t.keyb})` : ''}\n${t.hint || ''}`;
     b.innerHTML = `<svg viewBox="0 0 20 20">${t.icon || ICONS[id] || '<circle cx="10" cy="10" r="6"/>'}</svg>`;
     b.onclick = () => app.setTool(id); bar.append(b);
   }
@@ -296,7 +297,7 @@ function buildOptbar() {
   // the header names what the panel is about, also when it is folded
   const sel = d ? d.selected() : [], TY = { path: 'Path', rect: 'Rectangle', ellipse: 'Ellipse', text: 'Text', dim: 'Dimension' };
   const what = sel.length > 1 ? `${sel.length} objects` : sel.length ? (sel[0].s.type === 'path' && sel[0].s.nodes.some(n => n.a) ? 'Spline' : TY[sel[0].s.type] || 'Object') : t.title.replace(/ \(.*\)$/, '');
-  $('npTitle').textContent = what + ' properties'; $('npHead').title = `${t.title}  (${t.keyb})\n${t.hint || ''}\nClick to fold or unfold this panel`;
+  $('npTitle').textContent = what + ' properties'; $('npHead').title = `${t.title}${t.keyb ? `  (${t.keyb})` : ''}\n${t.hint || ''}\nClick to fold or unfold this panel`;
   if (!d) return;
   const tb = t.bar && t.bar();
   if (tb) bar.append(paramUI(tb.defs, tb.vals, (id, v) => tb.set(id, v), IN));
@@ -378,6 +379,8 @@ function buildColorPanel() {
 }
 
 // ---------- layers panel ----------
+const EYE_PATH = '<path d="M1.500 12S5.500 4.500 12 4.500 22.500 12 22.500 12 18.500 19.500 12 19.500 1.500 12 1.500 12z"/>';
+const EYE = `<svg viewBox="0 0 24 24">${EYE_PATH}<circle cx="12" cy="12" r="3.500"/></svg>`, EYE_OFF = `<svg viewBox="0 0 24 24">${EYE_PATH}<path d="M3.500 20.500l17-17"/></svg>`;
 function buildLayers() {
   const list = $('layers'), head = $('layerHead'), d = app.doc; list.innerHTML = ''; head.innerHTML = '';
   buildChannels();
@@ -392,7 +395,7 @@ function buildLayers() {
   const selMode = e => e.shiftKey ? 'add' : e.altKey ? 'sub' : 'replace';
   for (let i = d.layers.length - 1; i >= 0; i--) {
     const L = d.layers[i], row = el('div', 'layer' + (L === A ? ' active' : ''));
-    const eye = el('span', 'eye' + (L.visible ? '' : ' off'), '●'); eye.title = 'Show / hide';
+    const eye = el('span', 'eye' + (L.visible ? '' : ' off')); eye.innerHTML = L.visible ? EYE : EYE_OFF; eye.title = L.visible ? 'Hide this layer' : 'Show this layer';
     eye.onclick = e => { e.stopPropagation(); L.visible = !L.visible; app.commit(L.visible ? 'Show layer' : 'Hide layer'); };
     const th = el('span', 'thumb' + (L === A && !d.editMask ? ' on' : '')); if (L.type === 'adjust') th.textContent = 'fx'; else th.append(thumb(d, L));
     th.title = `${isMac ? '⌘' : 'Ctrl'}-click: select what is on this layer (Shift adds, Alt subtracts)`;

@@ -10,6 +10,7 @@ import { hdAffine } from './hd.js';
 import { inpaint } from './inpaint.js';
 import { objectMask, neuralFill } from './ai.js';
 import { findAnchor, anchors } from './dims.js';
+import { Warp } from './liquify.js';
 
 const D = () => app.doc;
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -804,6 +805,90 @@ const remove = {
     ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r, 0, 7); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r + 1, 0, 7); ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.stroke();
   },
 };
+// Liquify: push, twirl, pucker, bloat or restore pixels with a brush, or drag a selection (made with any selection tool)
+// so that its surroundings stretch smoothly. The displacement field (js/liquify.js) carries on from stroke to stroke on
+// the same layer, so nothing gets blurrier and Restore can always go back to the original.
+const LQ_OPTS = [
+  { id: 'mode', label: 'Mode', type: 'select', options: [['push', 'Push (forward warp)'], ['move', 'Move selection'], ['twirl', 'Twirl'], ['pucker', 'Pucker (pull in)'], ['bloat', 'Bloat (push out)'], ['restore', 'Restore']], default: 'push' },
+  { id: 'size', label: 'Size', type: 'range', min: 4, max: 1000, default: 120 },
+  { id: 'pressure', label: 'Pressure', type: 'range', min: 1, max: 100, default: 50, tip: 'How strongly the brush moves the pixels' },
+  { id: 'softness', label: 'Softness', type: 'range', min: 0, max: 100, default: 60, tip: 'How gradually the effect fades towards the edge of the brush' },
+  { id: 'feather', label: 'Feather', type: 'range', min: 4, max: 600, default: 80, tip: 'Move selection: how far around the selection the picture stretches. Larger than the distance you move looks smoothest.' },
+];
+const liquify = {
+  id: 'liquify', title: 'Liquify', s: null, warp: null,
+  get cursor() { return this.opt && this.opt.mode === 'move' ? 'move' : 'none'; },
+  hint: 'Push: drag to move pixels along like soft paint. Twirl, Pucker, Bloat and Restore work while the mouse is held (Alt turns the other way). Move selection: select with any selection tool (marquee, lasso, wand, Object Select, Select ▸ Subject…) and drag; the surroundings stretch over the feather. With a selection, the brush changes only the selected area. [ and ] change the size.',
+  options: LQ_OPTS,
+  bar() {
+    const o = this.opt, ids = o.mode === 'move' ? ['mode', 'feather'] : ['mode', 'size', 'pressure', 'softness'];
+    return { defs: LQ_OPTS.filter(p => ids.includes(p.id)), vals: o, set: (id, v) => { o[id] = v; app.saveSettings(); if (id === 'mode') { view.cursor(); app.refresh('tool', 'props', 'overlay'); } else app.refresh('overlay'); } };
+  },
+  // the field carries on while nothing else changed the layer (undo, painting, another document start a new one)
+  session(T) {
+    const d = D(), w = this.warp, c = T.canvas;
+    if (!w || w.doc !== d || w.id !== T.L.id || w.rev !== T.L.rev || w.base.length !== c.width * c.height * 4 || d.chan.edit) this.warp = Object.assign(new Warp(c), { doc: d, id: T.L.id });
+    return this.warp;
+  },
+  local(T, p) { return { x: p.x - T.x - 0.5, y: p.y - T.y - 0.5 }; },
+  show(s, box) { if (!box) return; s.W.render(s.T.ctx, ...box); s.changed = true; app.refresh('render'); },
+  down(ev) {
+    const T = paintTarget(); if (!T) return;
+    if (T.mask) { app.toast('Liquify works on image layers (click the layer thumbnail, not the mask)'); return; }
+    const d = D(), o = this.opt, W = this.session(T);
+    if (o.mode === 'move') {
+      if (!d.sel) { app.toast('Make a selection first (marquee, lasso, wand, Object Select or Select ▸ Subject), then drag it', 4000); return; }
+      if (!W.beginMove(W.cells(d.sel, T.x, T.y, o.feather))) { app.toast('The selection is empty'); return; }
+      this.s = { T, W, move: true, start: ev.p, v: [0, 0] }; return;
+    }
+    const p = this.local(T, ev.p);
+    this.s = { T, W, last: p, cur: p, alt: ev.alt, sel: d.sel ? W.cells(d.sel, T.x, T.y) : null };
+    if (o.mode !== 'push') { this.apply(); this.s.timer = setInterval(() => this.apply(), 40); }
+  },
+  apply() { // twirl, pucker, bloat, restore: a dab at the brush position every 40 ms while the mouse is held
+    const s = this.s, o = this.opt; if (!s) return;
+    const kind = o.mode === 'twirl' ? 'twirl' : o.mode === 'restore' ? 'restore' : 'scale', k = o.pressure / 100;
+    let a = kind === 'twirl' ? 0.12 * k : kind === 'restore' ? 0.25 * k : (o.mode === 'pucker' ? 0.05 : -0.05) * k;
+    if (s.alt && kind !== 'restore') a = -a;
+    this.show(s, s.W.dab(s.cur.x, s.cur.y, o.size / 2, 1 - o.softness / 100, kind, a, 0, s.sel));
+  },
+  move(ev) {
+    const s = this.s; if (!ev.drag || !s) return;
+    if (s.move) { s.v = [ev.p.x - s.start.x, ev.p.y - s.start.y]; if (!s.raf) s.raf = requestAnimationFrame(() => { s.raf = 0; if (this.s === s) this.show(s, s.W.move(s.v[0], s.v[1])); }); return; }
+    const p = this.local(s.T, ev.p), o = this.opt; s.cur = p; s.alt = ev.alt;
+    if (o.mode !== 'push') return;
+    const R = o.size / 2, k = o.pressure / 100, dx = p.x - s.last.x, dy = p.y - s.last.y, n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / Math.max(1, R / 4)));
+    let box = null;
+    for (let i = 1; i <= n; i++) {
+      const b = s.W.dab(s.last.x + dx * i / n, s.last.y + dy * i / n, R, 1 - o.softness / 100, 'push', dx / n * k, dy / n * k, s.sel);
+      box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b;
+    }
+    s.last = p; this.show(s, box);
+  },
+  up() {
+    const s = this.s; if (!s) return; this.s = null;
+    clearInterval(s.timer); if (s.raf) cancelAnimationFrame(s.raf);
+    if (s.move) {
+      if (s.v[0] || s.v[1]) { this.show(s, s.W.move(s.v[0], s.v[1])); shiftSelection(D(), Math.round(s.v[0]), Math.round(s.v[1])); }
+      s.W.endMove();
+    }
+    if (!s.changed) return;
+    s.T.touch(); app.commit('Liquify'); s.W.rev = s.T.L.rev;
+  },
+  cancel() { this.up(); },
+  deactivate() { this.up(); this.warp = null; }, // the field can be large
+  key(e) {
+    if (e.key !== '[' && e.key !== ']') return false;
+    const o = this.opt, id = o.mode === 'move' ? 'feather' : 'size', p = LQ_OPTS.find(q => q.id === id);
+    o[id] = Math.max(p.min, Math.min(p.max, Math.round(o[id] * (e.key === ']' ? 1.25 : 0.8) + (e.key === ']' ? 1 : -1)))); app.saveSettings(); app.refresh('tool', 'props', 'overlay'); return true;
+  },
+  draw(ctx) {
+    const mo = view.mouse; if (!mo || this.opt.mode === 'move') return;
+    const r = Math.max(1.5, this.opt.size / 2 * D().view.zoom), ri = r * (1 - this.opt.softness / 100);
+    ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r, 0, 7); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r + 1, 0, 7); ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.stroke();
+    if (ri > 2 && ri < r - 2) { ctx.save(); ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(mo.sx, mo.sy, ri, 0, 7); ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.stroke(); ctx.restore(); }
+  },
+};
 const bucket = {
   id: 'bucket', title: 'Paint Bucket', keyb: 'G',
   hint: 'Click to fill an area of similar colour with the foreground colour. On a mask it fills the mask (or the selection) with the grey level of the foreground colour.',
@@ -1056,8 +1141,8 @@ const objsel = {
 
 // toolbar order; '-' is a divider
 // '#Name' starts a labelled group
-export const TOOL_ORDER = ['#Move', 'select', 'node', 'transform', 'crop', '#Select', 'marquee', 'lasso', 'wand', 'objsel', '#Draw', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', '#Measure', 'dim', 'measure', '#Paint', 'brush', 'eraser', 'stamp', 'remove', 'bucket', 'gradient', '#View', 'eyedropper', 'hand', 'zoom'];
+export const TOOL_ORDER = ['#Move', 'select', 'node', 'transform', 'crop', '#Select', 'marquee', 'lasso', 'wand', 'objsel', '#Draw', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', '#Measure', 'dim', 'measure', '#Paint', 'brush', 'eraser', 'stamp', 'liquify', 'remove', 'bucket', 'gradient', '#View', 'eyedropper', 'hand', 'zoom'];
 export function registerTools() {
   for (const t of [select, node, transform, polyTool('line', 'Line / Polyline', 'N', false), polyTool('spline', 'Spline (smooth curve)', 'Y', true), pen, boxTool('rect', 'Rectangle', 'R', 'rect'), boxTool('ellipse', 'Ellipse', 'O', 'ellipse'), text, dimension, measure, marquee, lasso, wand, objsel, crop,
-    paintTool('brush', 'Brush', 'B', 'paint'), paintTool('eraser', 'Eraser', 'E', 'erase'), paintTool('stamp', 'Clone Stamp', 'S', 'stamp'), remove, bucket, gradient, eyedropper, hand, zoom]) app.registerTool(t);
+    paintTool('brush', 'Brush', 'B', 'paint'), paintTool('eraser', 'Eraser', 'E', 'erase'), paintTool('stamp', 'Clone Stamp', 'S', 'stamp'), liquify, remove, bucket, gradient, eyedropper, hand, zoom]) app.registerTool(t);
 }

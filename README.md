@@ -91,3 +91,9 @@ Google Fonts for web fonts. Licences of vendored code: LibRaw (LGPL/CDDL), heic-
 - No document opens by itself: `js/welcome.js` welcome screen with New, Open, Restore last session, sample and Recent (copies kept in IndexedDB, `addRecent` in io.js); File ▸ Open Recent, File ▸ Restore Last Session.
 - Dimension values: your own label keeps the length; labels with a unit can be scale references (`ref`), and `est` dimensions show lengths converted with their average scale (`docScale`, `dimValue` in core.js).
 - The folded side panel shows "<tool or object> properties".
+
+## Added 2026-11-27
+
+- Liquify tool (Filter ▸ Liquify, Cmd/Ctrl+Shift+X; `js/liquify.js`): Push, Twirl, Pucker, Bloat and Restore brushes with size, pressure and softness, and Move selection, which drags a selection made with any selection tool while its surroundings stretch over the feather. One displacement field per layer is kept between strokes, so repeated strokes do not blur and Restore goes back to the original; with a selection active the brush changes only the selected area.
+- Exports open a save dialog (folder and name; Chrome and Edge, remembered between exports); other browsers download. Batch conversion still goes to the downloads folder.
+- Bigger eye button in the Layers panel. The browser session store keeps layer pictures as PNG Blobs encoded once per pixel change (fast show/hide with large pictures).

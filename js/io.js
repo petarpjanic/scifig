@@ -400,28 +400,43 @@ export function toSVG(d) {
 }
 const blobOf = (c, type, q) => new Promise(ok => c.toBlob(ok, type, q));
 export async function exportDoc(d, format, o = {}) { setExporting(true); try { await exportDoc2(d, format, o); } finally { setExporting(false); } }
+// Where an export is written: a save dialog to choose the folder and the name (Chrome, Edge), else the downloads
+// folder. It is asked before the slow encoding, while the click that started the export still allows a dialog.
+// null: cancelled. Batch conversion (quiet) goes to the downloads folder without asking.
+const SAVE_TYPES = { png: ['image/png', 'PNG image'], jpg: ['image/jpeg', 'JPEG image'], webp: ['image/webp', 'WebP image'], tif: ['image/tiff', 'TIFF image'], svg: ['image/svg+xml', 'SVG drawing'], psd: ['image/vnd.adobe.photoshop', 'Photoshop document'] };
+async function saveTarget(file, quiet) {
+  const ext = file.split('.').pop(), t = SAVE_TYPES[ext];
+  if (quiet || !window.showSaveFilePicker || !t) return async b => download(b, file);
+  try {
+    const h = await window.showSaveFilePicker({ id: 'scifig-export', suggestedName: file, types: [{ description: t[1], accept: { [t[0]]: ['.' + ext] } }] });
+    return async b => { const w = await h.createWritable(); await w.write(b); await w.close(); app.toast('Exported ' + h.name); };
+  } catch (e) { if (e.name === 'AbortError') return null; console.warn('no save dialog, downloading instead', e); return async b => download(b, file); }
+}
 async function exportDoc2(d, format, o) {
-  const name = d.name || 'figure';
+  const name = d.name || 'figure', to = ext => saveTarget(name + '.' + ext, o.quiet);
+  let out;
   if (format === 'tiff16' || format === 'tiff32' || format === 'png16') {
     // high bit depth: the high-bit layer at full precision; without one, the 8-bit picture is written in the deeper format
     const hasHD = d.layers.some(L => L.hd && L.visible); let asShown = true;
     if (hasHD && !o.quiet) { const v = await dialog({ title: 'Export ' + { tiff16: '16-bit TIFF', tiff32: '32-bit float TIFF', png16: '16-bit PNG' }[format], text: 'Writes the high-bit layer at full precision.',
       params: [{ id: 'shown', label: 'As displayed (Develop settings, with the layers above it; adjustment layers are left out)', type: 'check', default: true }] }); if (!v) return; asShown = v.shown; }
+    if (!(out = await to(format === 'png16' ? 'png' : 'tif'))) return;
     let f = hasHD ? hdComposite(d, asShown) : null;
     if (!f) { const c = flatten(d, 1, { background: '#ffffff' }), p = c.getContext('2d').getImageData(0, 0, d.w, d.h).data; f = new Float32Array(d.w * d.h * 3); for (let i = 0, j = 0; i < p.length; i += 4, j += 3) { f[j] = p[i] / 255; f[j + 1] = p[i + 1] / 255; f[j + 2] = p[i + 2] / 255; } }
-    if (format === 'png16') download(png16(toU16(f), d.w, d.h), name + '.png'); else download(tiffHi(format === 'tiff32' ? f : toU16(f), d.w, d.h, format === 'tiff32', d.dpi), name + '.tif');
+    await out(format === 'png16' ? png16(toU16(f), d.w, d.h) : tiffHi(format === 'tiff32' ? f : toU16(f), d.w, d.h, format === 'tiff32', d.dpi));
   }
-  else if (format === 'webp') download(await blobOf(flatten(d), 'image/webp', 0.92), name + '.webp');
-  else if (format === 'png') download(await blobOf(flatten(d), 'image/png'), name + '.png');
-  else if (format === 'jpg') download(await blobOf(flatten(d, 1, { background: '#ffffff' }), 'image/jpeg', 0.95), name + '.jpg');
-  else if (format === 'svg') download(new Blob([toSVG(d)], { type: 'image/svg+xml' }), name + '.svg');
-  else if (format === 'tiff') { const c = flatten(d), px = c.getContext('2d').getImageData(0, 0, c.width, c.height); download(new Blob([UTIF.encodeImage(px.data, c.width, c.height)], { type: 'image/tiff' }), name + '.tif'); }
+  else if (format === 'webp') { if ((out = await to('webp'))) await out(await blobOf(flatten(d), 'image/webp', 0.92)); }
+  else if (format === 'png') { if ((out = await to('png'))) await out(await blobOf(flatten(d), 'image/png')); }
+  else if (format === 'jpg') { if ((out = await to('jpg'))) await out(await blobOf(flatten(d, 1, { background: '#ffffff' }), 'image/jpeg', 0.95)); }
+  else if (format === 'svg') { if ((out = await to('svg'))) await out(new Blob([toSVG(d)], { type: 'image/svg+xml' })); }
+  else if (format === 'tiff') { if (!(out = await to('tif'))) return; const c = flatten(d), px = c.getContext('2d').getImageData(0, 0, c.width, c.height); await out(new Blob([UTIF.encodeImage(px.data, c.width, c.height)], { type: 'image/tiff' })); }
   else if (format === 'psd') {
+    if (!(out = await to('psd'))) return;
     await loadScript('vendor/ag-psd.js');
     const solo = L => { const sv = [L.visible, L.opacity, L.blend]; L.visible = true; L.opacity = 1; L.blend = 'normal'; const c = rasterOf(d, [L], L.name).canvas; [L.visible, L.opacity, L.blend] = sv; return c; };
     const children = d.layers.filter(L => L.type !== 'adjust').map(L => { const R = L.type === 'raster' && !(L.mask && L.maskOn) ? L : null, c = R ? R.canvas : solo(L);
       return { name: L.name, canvas: c, left: R ? R.x : 0, top: R ? R.y : 0, opacity: L.opacity, hidden: !L.visible, blendMode: L.blend.replace(/-/g, ' ') }; });
-    download(new Blob([agPsd.writePsd({ width: d.w, height: d.h, children, canvas: flatten(d) })], { type: 'image/vnd.adobe.photoshop' }), name + '.psd');
+    await out(new Blob([agPsd.writePsd({ width: d.w, height: d.h, children, canvas: flatten(d) })], { type: 'image/vnd.adobe.photoshop' }));
     if (d.layers.some(L => L.type !== 'raster') && !o.quiet) app.toast('PSD export: vector layers were rasterised and adjustment layers left out of the layer list (the preview image includes them).', 6000);
   }
 }
