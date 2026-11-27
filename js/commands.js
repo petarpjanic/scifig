@@ -5,7 +5,7 @@ import { mk, copyCanvas, uid, newDoc, rasterLayer, vectorLayer, adjustLayer, bbo
 import { setSelection, clearSelection, selChanged, applyThroughSelection, coverDoc, gaussian, histogram, defaultParams, hexToRgb, refineSelection } from './imaging.js';
 import { rgbToLab } from './color.js';
 import { hdFilter, developHD } from './hd.js';
-import { subjectMask } from './ai.js';
+import { subjectMask, selectionBox } from './ai.js';
 import { printDoc } from './print.js';
 import { cropDoc, scaleDoc, rotateDoc, flipDoc, transformLayer, mergeDown, flattenDoc, rasterizeLayer, duplicateLayer } from './ops.js';
 import { dialog, openPalette, el, popupMenu, toolPopover, paramUI } from './ui.js';
@@ -361,6 +361,8 @@ export function registerCommands() {
       if (!any) { app.toast('No clear subject found'); return; } setSelection(d, c => c.drawImage(m, 0, 0)); app.commit('Select subject'); app.toast('Subject selected. Select ▸ Refine can smooth, grow or feather it.', 4000); }
     catch (e) { console.error(e); app.toast('Subject selection failed: ' + (e.message || e) + ' — the first use needs an internet connection', 8000); } },
     { desc: 'Find the main object or person automatically with a neural network that runs in your browser (first use downloads about 45 MB)', keywords: 'object person automatic background remove ai segment' });
+  C('select.snapObject', 'Snap Selection to Object (AI)', () => { const d = D(); if (!d.sel) { app.toast('Draw a rough selection around the object first (lasso, marquee…)'); return; } const box = selectionBox(d, d.sel); if (!box) { app.toast('The selection is empty'); return; } app.tools.get('objsel').run({ points: [], box }, 'replace', null); },
+    { desc: 'Turns a rough selection (lasso, marquee, wand…) into the object inside it, with exact edges. Uses Segment Anything in your browser; the first use downloads the model.', keywords: 'ai segment refine edges object snap lasso' });
   C('select.refine', 'Refine Selection…', async () => { const d = D(); if (!d.sel) { app.toast('Make a pixel selection first'); return; }
     const orig = copyCanvas(d.sel); let t = null; const run = v => { d.sel = copyCanvas(orig); refineSelection(d, v); app.refresh('overlay'); };
     const v = await dialog({ title: 'Refine selection', floating: true, text: 'The outline updates as you change the values.', params: [{ id: 'smooth', label: 'Smooth (px)', type: 'range', min: 0, max: 50, step: 0.5, default: 0 }, { id: 'shift', label: 'Grow / shrink (px)', type: 'range', min: -100, max: 100, default: 0 }, { id: 'feather', label: 'Feather (px)', type: 'range', min: 0, max: 100, step: 0.5, default: 0 }],
@@ -425,7 +427,7 @@ export function registerCommands() {
     ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.delete', 'edit.duplicate', '-', 'edit.fill', 'edit.contentFill', '-', 'edit.transform', 'edit.transformLayer']],
     ['Image', [['Adjustments (new layer)', adj], 'image.autoLevels', '-', 'image.size', 'image.canvas', 'image.cropSel', '-', 'image.rotCW', 'image.rotCCW', 'image.flipH', 'image.flipV', '-', 'image.units', 'image.setScale']],
     ['Layer', ['layer.newRaster', 'layer.newVector', ['New Adjustment Layer', adj], 'layer.fromSel', '-', ['Mask', ['layer.maskAdd', 'layer.maskHide', '-', 'layer.maskInvert', 'layer.maskApply', 'layer.maskDelete', '-', 'select.fromMask']], '-', 'layer.duplicate', 'layer.delete', 'layer.up', 'layer.down', '-', 'layer.merge', 'layer.rasterize', 'layer.flatten', '-', 'edit.transform']],
-    ['Select', ['select.all', 'select.none', 'select.invert', '-', 'select.subject', 'select.fromLayer', 'select.fromChannel', '-', 'select.refine', 'select.feather']],
+    ['Select', ['select.all', 'select.none', 'select.invert', '-', 'select.subject', 'select.snapObject', 'select.fromLayer', 'select.fromChannel', '-', 'select.refine', 'select.feather']],
     ['Filter', () => ['tool.liquify', '-', ...[...app.filters.keys()].map(k => 'filter.' + k)]],
     ['Object', ['object.front', 'object.forward', 'object.backward', 'object.back', '-', ['Align', ['align.left', 'align.hcenter', 'align.right', '-', 'align.top', 'align.vcenter', 'align.bottom', '-', 'distribute.h', 'distribute.v']], 'object.flipH', 'object.flipV', 'object.toPath', 'path.toggleClose', '-', 'object.scaleBar', 'text.localFonts']],
     ['Analyze', ['analyze.mtf', 'analyze.profile', 'analyze.stats', 'analyze.fft']],

@@ -8,7 +8,7 @@ import { setSelection, clearSelection, selChanged, applyThroughSelection, coverD
 import { cropDoc } from './ops.js';
 import { hdAffine } from './hd.js';
 import { inpaint } from './inpaint.js';
-import { objectMask, neuralFill } from './ai.js';
+import { objectMask, selectionBox, neuralFill } from './ai.js';
 import { findAnchor, anchors } from './dims.js';
 import { Warp } from './liquify.js';
 
@@ -785,23 +785,40 @@ function paintTool(id, title, keyb, mode) {
 // Paint over something to make it disappear: the painted area is rebuilt from its surroundings.
 const remove = {
   id: 'remove', title: 'Remove (magic eraser)', keyb: 'J', cursor: 'none', m: null,
-  hint: 'Paint over an object, scratch or label; on release it is rebuilt from its surroundings. "AI" gives the best result (first use downloads 28 MB); "patch" works offline. For a selection use Edit ▸ Content-Aware Fill.',
+  hint: 'Paint over an object, scratch or label; on release it is rebuilt from its surroundings. Or select it with any selection tool (Object Select, lasso, wand…) and click inside the selection (or press Enter). "AI" gives the best result (first use downloads 28 MB); "patch" works offline.',
   options: [{ id: 'size', label: 'Size', type: 'range', min: 3, max: 400, default: 30 }, { id: 'method', label: 'Method', type: 'select', options: [['ai', 'AI (best)'], ['patch', 'Patch (offline)']], default: 'ai' }],
   seg(a, b) { const c = this.m.c.getContext('2d'), T = this.m.T; c.strokeStyle = '#ff2d55'; c.lineWidth = this.opt.size; c.lineCap = c.lineJoin = 'round'; c.beginPath(); c.moveTo(a.x - T.x, a.y - T.y); c.lineTo(b.x - T.x + 0.01, b.y - T.y); c.stroke(); },
-  down(ev) { const T = paintTarget(); if (!T) return; if (T.mask) { app.toast('Remove works on image layers (click the layer thumbnail, not the mask)'); return; } this.m = { T, c: mk(T.canvas.width, T.canvas.height), last: ev.p }; this.seg(ev.p, ev.p); },
-  move(ev) { if (ev.drag && this.m) { this.seg(this.m.last, ev.p); this.m.last = ev.p; } },
+  target() { const T = paintTarget(); if (T && T.mask) { app.toast('Remove works on image layers (click the layer thumbnail, not the mask)'); return null; } return T; },
+  down(ev) { if (this.m) return; const T = this.target(); if (!T) return; this.m = { T, c: mk(T.canvas.width, T.canvas.height), last: ev.p, start: ev.p, moved: false }; this.seg(ev.p, ev.p); },
+  move(ev) { const m = this.m; if (ev.drag && m && !m.busy) { if (scr(m.start, ev.p) > 3) m.moved = true; this.seg(m.last, ev.p); m.last = ev.p; } },
   up() {
-    const m = this.m, d = D(); if (!m) return;
-    if (d.sel) { const c = m.c.getContext('2d'); c.globalCompositeOperation = 'destination-in'; c.drawImage(d.sel, -m.T.x, -m.T.y); }
-    app.toast('Removing…', 60000); app.refresh('overlay');
+    const m = this.m, d = D(); if (!m || m.busy) return;
+    if (d.sel && !m.moved) { // a click inside a selection removes everything that is selected
+      if (!inSel(d, m.start)) { this.m = null; app.refresh('overlay'); app.toast('Click inside the selection to remove it, or paint over what to remove'); return; }
+      m.c = this.hole(d, m.T);
+    } else if (d.sel) { const c = m.c.getContext('2d'); c.globalCompositeOperation = 'destination-in'; c.drawImage(d.sel, -m.T.x, -m.T.y); }
+    this.fill(m);
+  },
+  // the selection in layer pixels, grown by 2 px so that soft object edges go too
+  hole(d, T) {
+    const c = mk(T.canvas.width, T.canvas.height), x = c.getContext('2d');
+    for (const [dx, dy] of [[0, 0], [-2, 0], [2, 0], [0, -2], [0, 2], [-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) x.drawImage(d.sel, dx - T.x, dy - T.y);
+    x.globalCompositeOperation = 'source-in'; x.fillStyle = '#ff2d55'; x.fillRect(0, 0, c.width, c.height);
+    return c;
+  },
+  fill(m) {
+    m.busy = true; this.m = m; app.toast('Removing…', 60000); app.refresh('overlay');
     setTimeout(async () => { try { if (await contentFill(m.T, m.c, this.opt.method)) app.commit('Remove'); app.toast('Done', 700); } catch (e) { console.error(e); app.toast('Remove failed: ' + e.message, 5000); } this.m = null; app.refresh('render'); }, 30);
   },
-  cancel() { this.m = null; },
-  key(e) { if (e.key === '[' || e.key === ']') { const o = this.opt; o.size = Math.max(3, Math.min(400, Math.round(o.size * (e.key === ']' ? 1.25 : 0.8)))); app.saveSettings(); app.refresh('tool', 'overlay'); return true; } return false; },
+  cancel() { if (this.m && !this.m.busy) this.m = null; },
+  key(e) {
+    if (e.key === 'Enter' && !this.m && D().sel) { const T = this.target(); if (T) this.fill({ T, c: this.hole(D(), T) }); return true; }
+    if (e.key === '[' || e.key === ']') { const o = this.opt; o.size = Math.max(3, Math.min(400, Math.round(o.size * (e.key === ']' ? 1.25 : 0.8)))); app.saveSettings(); app.refresh('tool', 'overlay'); return true; } return false; },
   draw(ctx) {
     const m = this.m, z = D().view.zoom, mo = view.mouse;
     if (m) { const p = view.S({ x: m.T.x, y: m.T.y }); ctx.save(); ctx.globalAlpha = 0.45; ctx.imageSmoothingEnabled = false; ctx.drawImage(m.c, p.x, p.y, m.c.width * z, m.c.height * z); ctx.restore(); }
     if (!mo) return; const r = Math.max(1.5, this.opt.size / 2 * z);
+    if (!m && D().sel && inSel(D(), mo.p)) view.label(ctx, 'Click: remove the selection', mo.sx + r + 8, mo.sy + 18);
     ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r, 0, 7); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); ctx.beginPath(); ctx.arc(mo.sx, mo.sy, r + 1, 0, 7); ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.stroke();
   },
 };
@@ -1128,20 +1145,75 @@ const transform = {
 };
 
 // ---------- object select (neural network) ----------
+// Object Select: Segment Anything 2.1. A click or a box picks an object (Shift adds it, Alt subtracts it); right-click
+// leaves a part of the last object out and Cmd/Ctrl-click takes more of it, solved together with the first prompt.
+// Lasso mode (and Select ▸ Snap Selection to Object) turns a rough outline into the object inside it.
 const objsel = {
-  id: 'objsel', title: 'Object Select (AI)', keyb: 'Q', busy: false,
-  hint: 'Click an object to select it (Shift adds, Alt subtracts). Select ▸ Subject picks the main subject automatically; Select ▸ Refine softens or grows the result. Runs in your browser; the first use downloads the model.',
-  async down(ev) {
-    if (this.busy) return; this.busy = true; const d = D(), mode = selMode(ev);
-    try { const m = await objectMask(d, [{ x: ev.p.x, y: ev.p.y }]); if (app.doc === d) { setSelection(d, c => c.drawImage(m, 0, 0), mode); app.commit('Object select'); } }
-    catch (e) { console.error(e); app.toast('Object selection failed: ' + (e.message || e) + ' — the first use needs an internet connection', 8000); }
-    this.busy = false;
+  id: 'objsel', title: 'Object Select (AI)', keyb: 'Q', busy: false, g: null, last: null,
+  get cursor() { return this.busy ? 'progress' : 'crosshair'; },
+  hint: 'Click an object, or drag a box around it. Shift adds, Alt subtracts. Then right-click a part to leave it out, or Cmd/Ctrl-click to take more of it. Lasso mode: draw roughly around the object and the selection snaps to its edges (Select ▸ Snap Selection to Object does this for any selection). Runs in your browser; the first use downloads the model.',
+  options: [{ id: 'mode', label: 'Mode', type: 'select', options: [['box', 'Click or drag a box'], ['lasso', 'Lasso around the object']], default: 'box' }],
+  live() { const L = this.last, d = D(); return L && L.doc === d && L.selRev === d.selRev ? L : null; }, // the last object, while nothing else changed the selection
+  down(ev) {
+    if (this.busy) return;
+    if (ev.mod && this.live()) { this.refine(ev.p, true); return; }
+    this.g = { mode: selMode(ev), a: ev.p, b: ev.p, pts: this.opt.mode === 'lasso' ? [ev.p] : null };
+  },
+  move(ev) { const g = this.g; if (!g || !ev.drag) return; g.b = ev.p; if (g.pts) g.pts.push(ev.p); },
+  up() {
+    const g = this.g, d = D(); this.g = null; if (!g) return; app.refresh('overlay');
+    if (g.mode === 'sub' && !d.sel) { app.toast('There is no selection to subtract from'); return; }
+    const big = scr(g.a, g.b) > 4 || (g.pts && g.pts.length > 4);
+    if (g.pts && big) { // lasso: the object inside the outline
+      const m = mk(d.w, d.h), x = m.getContext('2d'); x.beginPath(); g.pts.forEach((p, i) => i ? x.lineTo(p.x, p.y) : x.moveTo(p.x, p.y)); x.fill();
+      const box = selectionBox(d, m); if (box) this.run({ points: [], box }, g.mode); return;
+    }
+    if (big) { this.run({ points: [], box: { x0: Math.min(g.a.x, g.b.x), y0: Math.min(g.a.y, g.b.y), x1: Math.max(g.a.x, g.b.x), y1: Math.max(g.a.y, g.b.y) } }, g.mode); return; }
+    this.run({ points: [{ x: g.a.x, y: g.a.y, add: true }] }, g.mode);
+  },
+  context(ev) { if (this.busy || !this.live()) return false; this.refine(ev.p, false); return true; },
+  refine(p, add) { const L = this.live(); this.run({ points: [...L.prompt.points, { x: p.x, y: p.y, add }], box: L.prompt.box }, L.mode, L.base); },
+  // All clicks are solved together; then each click is made to hold, later ones winning: a part to take that is still
+  // missing is added, a part to leave out that is still there is removed (its smallest mask).
+  async solve(d, prompt) {
+    const m = await objectMask(d, prompt), x = m.getContext('2d'), at = q => x.getImageData(Math.floor(q.x), Math.floor(q.y), 1, 1).data[3] > 127;
+    if (prompt.points.length < 2 && !(prompt.box && prompt.points.length)) return m;
+    for (const q of prompt.points) {
+      const out = q.add === false; if (at(q) !== out) continue;
+      const part = await objectMask(d, { points: [{ x: q.x, y: q.y, add: true }] }, out ? 'small' : 'best');
+      x.globalCompositeOperation = out ? 'destination-out' : 'source-over'; // a part taken out goes 1.5 px wider, so no edge of it is left
+      for (const [dx, dy] of out ? [[0, 0], [-1.5, 0], [1.5, 0], [0, -1.5], [0, 1.5]] : [[0, 0]]) x.drawImage(part, dx, dy);
+      x.globalCompositeOperation = 'source-over';
+    }
+    return m;
+  },
+  // base: the selection before this object, so that refining replaces only the object's own part
+  async run(prompt, mode, base) {
+    const d = D(); this.busy = true; view.cursor();
+    try {
+      const m = await this.solve(d, prompt); if (app.doc !== d) return;
+      const a = m.getContext('2d').getImageData(0, 0, d.w, d.h).data; let any = false; for (let i = 3; i < a.length; i += 4) if (a[i] > 127) { any = true; break; }
+      if (!any && base === undefined) { app.toast('No object found there'); return; } // when refining, nothing left is a valid answer
+      if (base === undefined) base = d.sel ? copyCanvas(d.sel) : null;
+      d.sel = base ? copyCanvas(base) : null;
+      setSelection(d, c => c.drawImage(m, 0, 0), mode); app.commit('Object select');
+      this.last = { doc: d, prompt, mode, base, selRev: d.selRev };
+    } catch (e) { console.error(e); app.toast('Object selection failed: ' + (e.message || e) + ' — the first use needs an internet connection', 8000); }
+    finally { this.busy = false; view.cursor(); app.refresh('overlay'); }
+  },
+  cancel() { this.g = null; },
+  draw(ctx) {
+    const g = this.g, z = D().view.zoom, line = () => { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([4, 4]); ctx.strokeStyle = '#000'; ctx.stroke(); ctx.setLineDash([]); };
+    if (g && g.pts) { ctx.beginPath(); g.pts.forEach((q, i) => { const p = view.S(q); i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }); line(); }
+    else if (g && scr(g.a, g.b) > 4) { const p = view.S({ x: Math.min(g.a.x, g.b.x), y: Math.min(g.a.y, g.b.y) }); ctx.beginPath(); ctx.rect(p.x, p.y, Math.abs(g.b.x - g.a.x) * z, Math.abs(g.b.y - g.a.y) * z); line(); }
+    const L = this.live(); if (!L) return;
+    for (const q of L.prompt.points) { const p = view.S(q); ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fillStyle = q.add === false ? '#ff3b30' : '#34c759'; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke(); }
   },
 };
 
 // toolbar order; '-' is a divider
 // '#Name' starts a labelled group
-export const TOOL_ORDER = ['#Move', 'select', 'node', 'transform', 'crop', '#Select', 'marquee', 'lasso', 'wand', 'objsel', '#Draw', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', '#Measure', 'dim', 'measure', '#Paint', 'brush', 'eraser', 'stamp', 'liquify', 'remove', 'bucket', 'gradient', '#View', 'eyedropper', 'hand', 'zoom'];
+export const TOOL_ORDER = ['#Move', 'select', 'node', 'transform', 'crop', '#Select', 'marquee', 'lasso', 'wand', 'objsel', '#Draw', 'line', 'spline', 'pen', 'text', 'rect', 'ellipse', '#Measure', 'dim', 'measure', '#Paint', 'brush', 'eyedropper', 'eraser', 'stamp', 'liquify', 'remove', 'bucket', 'gradient', '#View', 'hand', 'zoom'];
 export function registerTools() {
   for (const t of [select, node, transform, polyTool('line', 'Line / Polyline', 'N', false), polyTool('spline', 'Spline (smooth curve)', 'Y', true), pen, boxTool('rect', 'Rectangle', 'R', 'rect'), boxTool('ellipse', 'Ellipse', 'O', 'ellipse'), text, dimension, measure, marquee, lasso, wand, objsel, crop,
     paintTool('brush', 'Brush', 'B', 'paint'), paintTool('eraser', 'Eraser', 'E', 'erase'), paintTool('stamp', 'Clone Stamp', 'S', 'stamp'), liquify, remove, bucket, gradient, eyedropper, hand, zoom]) app.registerTool(t);
